@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>课程助手 · API 设置</title><style>
+body{font:15px/1.7 system-ui;background:#eef2f8;color:#182333;margin:32px auto;max-width:680px;padding:24px}h1{font-size:24px}label{display:block;margin:18px 0}input{box-sizing:border-box;width:100%;padding:10px;border:1px solid #9ba8bc;border-radius:7px;font:inherit}button{padding:10px 18px;margin-right:8px;background:#244bb1;color:white;border:0;border-radius:7px;cursor:pointer}#status{white-space:pre-wrap}small{color:#53627a}
+</style></head><body>
+<h1>课程助手 · API 设置</h1>
+<p>仅在你勾选课程页的“新题调用 API”后，才会把未命中的题干、题型和选项发送至这里配置的服务。</p>
+<label>Base URL 或完整 Chat Completions 地址<input id="endpoint" type="url" placeholder="https://api.deepseek.com"></label>
+<small>支持根域名、/v1 和完整 /chat/completions；保存时自动补齐接口路径。</small>
+<label>模型名称<input id="model" placeholder="填写服务商支持的模型 ID"></label>
+<label>API Key<input id="key" type="password" autocomplete="off" placeholder="填写你的 API Key"></label>
+<label>本次浏览器会话调用上限<input id="limit" type="number" min="1" max="500" value="30"></label>
+<p><small>密钥只保存在扩展会话存储中，关闭浏览器、重新加载或更新扩展后需要重新填写；课程页面脚本无法读取。服务地址、模型也随会话清除。每次请求最多 10 道题，失败不会自动重试。模型可能答错。</small></p>
+<button id="save">授权域名并保存</button><button id="test">测试 API 答题</button><button id="clear">清除 API 设置</button>
+<p id="status" role="status"></p>
+<details><summary>切课诊断日志</summary><p>保留最近 200 条切课请求、输入结果及跳转错误，不包含 API Key。</p><button id="loadLog">读取切课日志</button><textarea id="switchLog" readonly style="width:100%;height:260px;margin-top:12px" aria-label="切课日志"></textarea></details>
+<script src="core.js"></script><script src="options.js"></script></body></html>

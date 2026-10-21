@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+*.pem
+*.key
+*.crx
+screenshots/
+private/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

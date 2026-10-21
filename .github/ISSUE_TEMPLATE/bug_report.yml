@@ -1,0 +1,24 @@
+name: 问题反馈
+description: 播放、切课、目录定位或 API 异常
+title: "[问题] "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: 扩展版本与 Chrome 版本
+      placeholder: "例如：扩展 1.4.0，Chrome 版本号"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤与实际结果
+      description: 说明问题发生在视频结束、展开目录、切课还是 API 答题时。
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关切课日志或错误提示
+      description: 只提供相关片段，删除 API Key、Cookie、账号及个人信息。
+      render: text

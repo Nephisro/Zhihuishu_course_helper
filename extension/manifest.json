@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "智慧树课程助手",
+  "version": "1.4.0",
+  "description": "课程连播、随堂练习检测、本地题库匹配与人工接管。",
+  "permissions": ["storage", "debugger"],
+  "optional_host_permissions": ["https://*/*"],
+  "background": {"service_worker": "background.js"},
+  "options_page": "options.html",
+  "minimum_chrome_version": "118",
+  "content_scripts": [{
+    "matches": ["https://wisdom-mooc.zhihuishu.com/study/*"],
+    "js": ["core.js", "content.js"],
+    "run_at": "document_idle"
+  }]
+}

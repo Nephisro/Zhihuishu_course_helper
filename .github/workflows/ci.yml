@@ -1,0 +1,33 @@
+name: Check, test and package
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Check source and manifest
+        run: node scripts/check.mjs
+      - name: Run offline tests
+        run: node --test
+      - name: Build archives
+        run: node scripts/pack.mjs
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: zhihuishu-course-helper-packages
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
