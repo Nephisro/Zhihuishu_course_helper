@@ -7,10 +7,12 @@
   const sameIndices = (a,b) => a.length===b.length && [...a].sort((x,y)=>x-y).every((n,i)=>n===[...b].sort((x,y)=>x-y)[i]);
   const submissionPrompt = text => /提交|交卷/.test(text) && /确认|确定|是否|无法修改|不能修改/.test(text) &&
     !/未答|未完成|漏答|剩余.*题|验证码|安全验证/.test(text);
+  const savingPrompt = text => /(?:确定|确认|是否).{0,20}(?:暂存|保存)作业/.test(core.normalize(text)) &&
+    !/提交|交卷|删除|未答|未完成|漏答|验证码|安全验证/.test(text);
 
   function createRunner({page,solve,status=()=>{},now=Date.now}) {
     let running=false,busy=false,epoch=0,config={},phase='answer',exam=null,expected=1;
-    let plan=null,mark='',deadline=0,retryAt=0,beforeNotice='',confirmed=false,completed=false;
+    let plan=null,mark='',deadline=0,retryAt=0,beforeNotice='',confirmed=false,saveConfirmed=false,completed=false;
     const saved=new Set();
     function stop(message) { running=false;epoch++;status(message); }
     function start(settings) {
@@ -28,8 +30,11 @@
         if(!isChapter(s.title)){stop('当前不是可识别的章节测试，请人工处理');return;}
         if(exam&&s.examKey!==exam.key){stop('测试页面已变化，已停止');return;}
         if(s.dialog){
+          if(phase==='save'&&!saveConfirmed&&savingPrompt(s.dialog.text)&&s.dialog.confirmable&&s.progress===100&&s.question&&fingerprint(s.question)===mark&&sameIndices(s.question.selected,plan)){
+            saveConfirmed=true;page.confirm('save');deadline=now()+15000;status('已确认暂存，等待平台保存结果');return;
+          }
           if(phase==='submit'&&!confirmed&&submissionPrompt(s.dialog.text)&&s.dialog.confirmable){
-            confirmed=true;page.confirm();deadline=now()+15000;status('已确认交卷，等待平台提交结果');return;
+            confirmed=true;page.confirm('submit');deadline=now()+15000;status('已确认交卷，等待平台提交结果');return;
           }
           status('存在页面提示，请人工处理后继续');return;
         }
@@ -70,7 +75,11 @@
             return;
           }
           if(expected<exam.total){phase='next';deadline=now()+15000;page.next();status(`第 ${expected} 题已作答，保存并进入下一题`);}
-          else {phase='save';beforeNotice=s.savedNotice||'';deadline=now()+15000;page.save();status('末题已作答，正在暂存整份测试');}
+          else if(config.autoSubmit){
+            if(s.progress!==100){if(now()>=deadline)stop('全部题目已作答，但平台完成率尚未达到 100%，请人工核对');else status('全部题目已作答，等待平台完成率达到 100%');return;}
+            if(saved.size!==exam.total-1){stop('尚未确认已依次处理全部题目，取消交卷');return;}
+            phase='submit';deadline=now()+15000;page.submit();status('全部题目已作答，已请求提交作业');
+          } else {phase='save';saveConfirmed=false;beforeNotice=s.savedNotice||'';deadline=now()+15000;page.save();status('末题已作答，正在暂存整份测试');}
           return;
         }
         if(!['single','multiple','boolean'].includes(q.type)||q.options.length<2||q.options.some(o=>!o.trim())||q.unsupportedMedia){stop(`第 ${expected} 题题型或内容不支持，请人工处理`);return;}
@@ -103,6 +112,6 @@
     }
     return {start,stop,tick,get running(){return running;},get completed(){return completed;}};
   }
-  const api={createRunner,isChapter,submissionPrompt};
+  const api={createRunner,isChapter,submissionPrompt,savingPrompt};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.ZhsChapterEngine=api;
 })(globalThis);

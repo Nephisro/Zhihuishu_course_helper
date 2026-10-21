@@ -9,7 +9,7 @@
   const version=chrome.runtime.getManifest?.().version||'';
   own.style.cssText='position:fixed;right:18px;bottom:18px;z-index:2147483647';
   const ui=own.attachShadow({mode:'open'});
-  ui.innerHTML=`<style>:host{font:14px/1.5 system-ui;color:#e8edf7}section{box-sizing:border-box;width:300px;padding:16px;background:#182333;border:1px solid #44546c;border-radius:14px}h3{margin:0 0 8px}p{white-space:pre-wrap;max-height:140px;overflow:auto}button{padding:7px 10px;margin:4px 4px 4px 0;border:0;border-radius:6px;cursor:pointer}label{display:block;margin:8px 0}small{display:block;color:#c3d1e4}</style><section><h3>章节测试助手 ${version?'v'+version:''}</h3><p id="status" role="status">正在读取设置</p><button id="toggle" type="button">开始自动作答并提交</button><button id="api" type="button">API 设置</button><button id="inspect" type="button">查看读取状态</button><label><input id="autoQuiz" type="checkbox" checked> 使用本地题库</label><label><input id="autoApi" type="checkbox"> 新题调用 API</label><label><input id="autoSubmit" type="checkbox" checked> 全部保存后自动提交作业</label><small>从第 1 题启动；题库在课程面板保存。未知题型、已有不同答案和保存失败时暂停；验证码需人工完成。</small></section>`;
+  ui.innerHTML=`<style>:host{font:14px/1.5 system-ui;color:#e8edf7}section{box-sizing:border-box;width:300px;padding:16px;background:#182333;border:1px solid #44546c;border-radius:14px}h3{margin:0 0 8px}p{white-space:pre-wrap;max-height:140px;overflow:auto}button{padding:7px 10px;margin:4px 4px 4px 0;border:0;border-radius:6px;cursor:pointer}label{display:block;margin:8px 0}small{display:block;color:#c3d1e4}</style><section><h3>章节测试助手 ${version?'v'+version:''}</h3><p id="status" role="status">正在读取设置</p><button id="toggle" type="button">开始自动作答并提交</button><button id="api" type="button">API 设置</button><button id="inspect" type="button">查看读取状态</button><label><input id="autoQuiz" type="checkbox" checked> 使用本地题库</label><label><input id="autoApi" type="checkbox"> 新题调用 API</label><label><input id="autoSubmit" type="checkbox" checked> 全部作答后自动提交作业</label><small>从第 1 题启动；题库在课程面板保存。未知题型、已有不同答案和保存失败时暂停；验证码需人工完成。</small></section>`;
   document.documentElement.append(own);
   for(const name of ['click','dblclick','pointerdown','pointerup','keydown','keyup'])own.addEventListener(name,event=>event.stopPropagation());
   const $=id=>ui.getElementById(id);
@@ -69,9 +69,10 @@
       }
     },
     next(){button('下一题').click();},save(){button('暂存作业').click();},submit(){button('提交作业').click();},
-    confirm(){
+    confirm(kind='submit'){
       const s=read();
-      if(s.captcha||!s.dialog?.confirmable||!globalThis.ZhsChapterEngine.submissionPrompt(s.dialog.text))throw new Error('交卷确认提示已变化');
+      const check=kind==='save'?globalThis.ZhsChapterEngine.savingPrompt:globalThis.ZhsChapterEngine.submissionPrompt;
+      if(s.captcha||!s.dialog?.confirmable||!check(s.dialog.text))throw new Error('保存或交卷确认提示已变化');
       const dialog=query('.el-dialog,.el-message-box').filter(shown)[0];
       query('button',dialog).find(e=>enabled(e)&&/^(确定|确认|确认提交|确定提交|提交作业)$/.test(e.textContent.trim())).click();
     },

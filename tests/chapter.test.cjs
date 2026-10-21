@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {createRunner,isChapter,submissionPrompt}=require('../extension/chapter-engine.js');
+const {createRunner,isChapter,submissionPrompt,savingPrompt}=require('../extension/chapter-engine.js');
 const {rendered,visibleOverlay,readContent}=require('../extension/chapter-dom.js');
 
 function fixture({autoApi=false,autoSubmit=true,solve,bank,questions}={}){
@@ -14,7 +14,7 @@ function fixture({autoApi=false,autoSubmit=true,solve,bank,questions}={}){
   const calls={select:0,next:0,save:0,submit:0,confirm:0,api:0};
   const page={
     read:()=>structuredClone({...state,question:qs[index]}),
-    select:indices=>{calls.select++;qs[index].selected=[...indices];},
+    select:indices=>{calls.select++;qs[index].selected=[...indices];state.progress=Math.round(qs.filter(q=>q.selected.length).length/qs.length*100);},
     next:()=>{calls.next++;index++;},
     save:()=>{calls.save++;state.progress=100;state.savedNotice='saved-unique:暂存成功';},
     submit:()=>{calls.submit++;state.dialog={text:'确认提交作业？提交后无法修改。',confirmable:true};},
@@ -34,10 +34,13 @@ test('chapter title guard accepts chapter tests and excludes final exams',()=>{
   for(const title of ['期末考试','期中单元测试','结课测试','平时作业','第一章考试'])assert.equal(isChapter(title),false,title);
   assert.equal(submissionPrompt('确认提交作业，提交后无法修改'),true);
   assert.equal(submissionPrompt('还有未答题，是否提交作业？'),false);
+  assert.equal(savingPrompt('提示\n你确定要暂存作业吗\n取消确定'),true);
+  assert.equal(savingPrompt('你确定要提交作业吗'),false);
+  assert.equal(submissionPrompt('你确定要暂存作业吗'),false);
 });
 test('single, multiple and boolean questions are saved in order before one submission',async()=>{
   const h=fixture();await h.finish();assert.deepEqual(h.qs.map(q=>q.selected),[[1],[2,0],[0]]);
-  assert.deepEqual(h.calls,{select:3,next:2,save:1,submit:1,confirm:1,api:0});assert.equal(h.runner.completed,true);assert.match(h.last,/提交成功/);
+  assert.deepEqual(h.calls,{select:3,next:2,save:0,submit:1,confirm:1,api:0});assert.equal(h.runner.completed,true);assert.match(h.last,/提交成功/);
   h.runner.start(h.config);await h.finish();assert.equal(h.calls.submit,1);
 });
 test('all questions can be saved with final submission disabled',async()=>{
@@ -90,9 +93,17 @@ test('unexpected question jump or next-page timeout does not repeat navigation',
 });
 test('saving requires both a new positive notice and 100 percent progress',async()=>{
   for(const saved of [{progress:100,savedNotice:''},{progress:90,savedNotice:'new:暂存成功'}]){
-    const h=fixture();h.page.save=()=>{h.calls.save++;Object.assign(h.state,saved);};await h.finish();h.advance(16000);await h.tick();
+    const h=fixture({autoSubmit:false});h.page.save=()=>{h.calls.save++;Object.assign(h.state,saved);};await h.finish();h.advance(16000);await h.tick();
     assert.equal(h.calls.submit,0);assert.equal(h.calls.save,1);assert.equal(h.runner.running,false);
   }
+});
+test('actual save-confirmation prompt is accepted once before waiting for saved success',async()=>{
+  const h=fixture({autoSubmit:false});h.page.save=()=>{h.calls.save++;h.state.progress=100;h.state.dialog={text:'你确定要暂存作业吗',confirmable:true};};
+  const confirmed=[];h.page.confirm=kind=>{h.calls.confirm++;confirmed.push(kind);h.state.dialog=null;if(kind==='save')h.state.savedNotice='actual-save-success:暂存成功';else h.state.submitted=true;};
+  await h.finish();assert.deepEqual(confirmed,['save']);assert.equal(h.calls.save,1);assert.equal(h.calls.submit,0);assert.equal(h.runner.completed,true);
+});
+test('direct submission waits for platform completeness and never falls back to temporary save',async()=>{
+  const h=fixture();const select=h.page.select;h.page.select=indices=>{select(indices);h.state.progress=90;};await h.finish();assert.equal(h.calls.submit,0);assert.equal(h.calls.save,0);assert.equal(h.runner.running,false);
 });
 test('an incomplete-answer confirmation is never automatically accepted',async()=>{
   const h=fixture();h.page.submit=()=>{h.calls.submit++;h.state.dialog={text:'还有未答题，是否提交作业？',confirmable:true};};await h.finish();

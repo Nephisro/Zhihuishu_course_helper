@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "智慧树课程助手",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "description": "课程连播、章节测试与随堂练习辅助、本地题库及可选 API。",
   "permissions": ["storage", "debugger"],
   "optional_host_permissions": ["https://*/*"],
