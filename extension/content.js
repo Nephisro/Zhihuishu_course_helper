@@ -2,7 +2,8 @@
   'use strict';
   if (document.getElementById('zhs-course-helper')) return;
   const {validateBank, matchQuestion, catalogKind} = globalThis.ZhsCourseCore;
-  const defaults = {autoQuiz: true, autoNext: false, autoApi: false, bank: []};
+  const defaults = {autoQuiz: true, autoNext: false, autoApi: false, autoChapter: false, bank: []};
+  const END_WAIT_MS = 3000;
   let config = {...defaults}, running = false, busy = false, currentVideo = null, ready = false;
   let resumeAfterQuiz = false, switchAt = 0, observedQuiz = false;
   let waitForSwitch = false, switchedFrom = null, switchTarget = null, lastScan = 0, endedSince = 0;
@@ -25,6 +26,7 @@
     <label><input id="autoNext" type="checkbox"> 浏览器输入连播（跳过章节测试）</label>
     <label><input id="autoQuiz" type="checkbox"> 使用本地题库自动作答</label>
     <label><input id="autoApi" type="checkbox"> 新题调用 API（需先配置）</label><button id="apiSettings">API 设置</button><button id="retryApi">手动重试 API</button>
+    <label><input id="autoChapter" type="checkbox"> 打开的章节测试页自动作答并提交</label>
     <small>新题等待人工；不会自动关闭未知弹窗。</small>
     <details><summary>本地题库与诊断</summary><p>答案填写完整选项文字，不填 A/B。</p><textarea id="bank" spellcheck="false" aria-label="JSON题库"></textarea>
     <button id="save">保存题库</button><button id="capture">提取当前题目模板</button><button id="diagnose">查看状态</button><small>本地题库存于当前浏览器；API 按需另行启用。</small></details>
@@ -57,8 +59,8 @@
     if (!boundVideos.has(v)) {
       boundVideos.add(v);
       v.addEventListener('playing',()=>{if(running){playedVideos.add(v);finishedVideos.delete(v);}});
-      v.addEventListener('ended',()=>{if(running && currentVideo===v && playedVideos.has(v))finishedVideos.add(v);});
-      v.addEventListener('loadstart',()=>{playedVideos.delete(v);finishedVideos.delete(v);});
+      v.addEventListener('ended',()=>{if(running && currentVideo===v && playedVideos.has(v)){finishedVideos.add(v);endedSince=Date.now();}});
+      v.addEventListener('loadstart',()=>{playedVideos.delete(v);finishedVideos.delete(v);if(currentVideo===v)endedSince=0;});
     }
     if (!v.paused && !v.ended) playedVideos.add(v);
   }
@@ -142,7 +144,7 @@
   async function nextLesson(v) {
     if (!config.autoNext || !v.ended || Date.now() - switchAt < 5000) return;
     if (!finishedVideos.has(v) || !playedVideos.has(v)) { status('播放器已结束，但未观察到本次运行的播放→结束事件；不会自动切课'); return; }
-    if (!endedSince || Date.now() - endedSince < 15000) { status('视频结束，等待 15 秒处理进度与可能出现的随堂练习'); return; }
+    if (!endedSince || Date.now() - endedSince < END_WAIT_MS) { status('视频结束，等待 3 秒处理进度与可能出现的随堂练习'); return; }
     if (waitForSwitch) { status('已请求切换课节；若未切换，请人工点击目录'); return; }
     const entries = query('.chapter-item').map(catalogEntry);
     const selected = entries.filter(e=>e.item.classList.contains('current'));
@@ -175,12 +177,13 @@
       observeVideo(v);
       const dialog = quiz();
       if (dialog) {
+        endedSince = 0;
         if (!observedQuiz) { resumeAfterQuiz = !!v && !v.ended; observedQuiz = true; }
         if (v && !v.paused) v.pause();
         if (!seenQuizzes.has(dialog)) { seenQuizzes.add(dialog); notify(); }
         await processQuiz(dialog); return;
       }
-      if (blockers().length) { status('检测到其他弹窗，请人工处理'); return; }
+      if (blockers().length) { endedSince = 0; status('检测到其他弹窗，请人工处理'); return; }
       if (observedQuiz) {
         observedQuiz = false;
         if (resumeAfterQuiz) { resumeAfterQuiz = false; await playVideo(v); }
@@ -216,7 +219,7 @@
     await playVideo(video());
   };
   $('fold').onclick = () => { $('body').hidden = !$('body').hidden; $('fold').textContent = $('body').hidden ? '+' : '−'; };
-  for (const id of ['autoNext','autoQuiz','autoApi']) $(id).onchange = async () => {
+  for (const id of ['autoNext','autoQuiz','autoApi','autoChapter']) $(id).onchange = async () => {
     config[id] = $(id).checked;
     try { await save(); status('设置已保存'); } catch (e) { status(`保存失败：${e.message}`); }
   };
@@ -244,7 +247,7 @@
     try { config = {...defaults, ...data.zhsCourseHelper}; config.bank = validateBank(config.bank); }
     catch { config = {...defaults}; status('已重置无效题库'); }
     if (config.flowGuardVersion !== 2) { config.autoNext=false;config.flowGuardVersion=2;await save(); }
-    for (const id of ['autoNext','autoQuiz','autoApi']) $(id).checked = config[id];
+    for (const id of ['autoNext','autoQuiz','autoApi','autoChapter']) $(id).checked = config[id];
     $('bank').value = JSON.stringify(config.bank, null, 2);
     ready = true;
   }).catch(e => status(`读取设置失败：${e.message}`));

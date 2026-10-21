@@ -12,7 +12,8 @@ function harness({limit=30,count=0,status=200,content='{"answers":[{"id":0,"answ
     fetch:async(url,options)=>{calls++;request={url,options};if(abort)throw Object.assign(new Error(),{name:'AbortError'});return {ok:status===200,status,json:async()=>({choices:[{message:{content}}]})};}};
   context.globalThis=context;vm.runInNewContext(fs.readFileSync(require.resolve('../extension/background.js'),'utf8'),context);
   const sender={id:'test-extension',tab:{url:'https://wisdom-mooc.zhihuishu.com/study/index'}};
-  return {data,get request(){return request;},get calls(){return calls;},send:questions=>new Promise(resolve=>listener({type:'zhsSolve',questions},sender,resolve)),unauthorized:()=>listener({type:'zhsSolve',questions:qs},{id:'other',tab:sender.tab},()=>{throw Error('unexpected reply');})};
+  const chapterSender={id:'test-extension',tab:{id:2},url:'https://onlineexamh5new.zhihuishu.com/stuExamWeb.html#/webExamList/dohomework/test'};
+  return {data,get request(){return request;},get calls(){return calls;},send:questions=>new Promise(resolve=>listener({type:'zhsSolve',questions},sender,resolve)),chapter:()=>new Promise(resolve=>listener({type:'zhsChapterSolve',questions:qs},chapterSender,resolve)),invalidChapter:()=>listener({type:'zhsChapterSolve',questions:qs},{...chapterSender,url:chapterSender.url.replace('/dohomework/','/exam/')},()=>{throw Error('unexpected reply');}),unauthorized:()=>listener({type:'zhsSolve',questions:qs},{id:'other',tab:sender.tab},()=>{throw Error('unexpected reply');})};
 }
 test('background sends only question data with bearer auth and validates response',async()=>{
   const h=harness();const result=await h.send(qs);assert.equal(result.ok,true);assert.equal(h.calls,1);
@@ -30,3 +31,7 @@ test('DeepSeek root URL requests actual completions endpoint in non-thinking JSO
   assert.equal((await h.send(qs)).ok,true);assert.equal(h.request.url,'https://api.deepseek.com/chat/completions');
   const body=JSON.parse(h.request.options.body);assert.deepEqual(body.thinking,{type:'disabled'});assert.deepEqual(body.response_format,{type:'json_object'});
 });
+test('chapter tab uses shared API session and rate limit without leaking key',async()=>{
+  const h=harness();assert.equal((await h.chapter()).ok,true);const delayed=await h.chapter();assert.equal(delayed.ok,false);assert.ok(delayed.retryAfterMs>0&&delayed.retryAfterMs<=5000);assert.equal(h.calls,1);assert.equal(JSON.stringify(delayed).includes('TEST_ONLY'),false);
+});
+test('non-homework exam routes cannot request chapter API answers',()=>{const h=harness();assert.equal(h.invalidChapter(),false);assert.equal(h.calls,0);});

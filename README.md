@@ -1,8 +1,8 @@
 # 智慧树课程助手
 
-适用于智慧树新版课程学习页面的 Chrome Manifest V3 扩展，当前版本 **1.4.0**。
+适用于智慧树新版课程学习页面的 Chrome Manifest V3 扩展，当前版本 **1.5.1**。
 
-支持视频课节连播、自动展开章节和滚动目录、随堂练习检测、本地题库及可选的 OpenAI 兼容 API 答题。项目处于验证阶段，网站更新后可能需要重新适配。
+支持视频课节连播、自动展开章节和滚动目录、随堂练习与章节测试、本地题库及可选的 OpenAI 兼容 API 答题。项目处于验证阶段，网站更新后可能需要重新适配。
 
 ## 安装
 
@@ -10,7 +10,7 @@
 
 **从源码安装：**下载或克隆仓库，在 `chrome://extensions/` 打开开发者模式，选择“加载已解压的扩展程序”，加载仓库中的 **`extension/`** 文件夹。
 
-**从安装包安装：**解压 `zhihuishu-course-helper-v1.4.0.zip`，加载其中包含 `manifest.json` 的 `zhihuishu-course-helper/` 文件夹。
+**从安装包安装：**解压 `zhihuishu-course-helper-v1.5.1.zip`，加载其中包含 `manifest.json` 的 `zhihuishu-course-helper/` 文件夹。
 
 安装后刷新课程页。升级已有版本时替换原扩展文件并重新加载，再刷新课程页。不要同时启用多个版本。
 
@@ -21,11 +21,26 @@
 3. 需要连播时，勾选“浏览器输入连播（跳过章节测试）”。默认关闭，首次升级浏览器输入模式后也需要重新开启。
 4. 点击“启动助手”。“停止助手”会停止后续操作，已经发出的输入无法撤回。
 
-视频播放结束后，助手等待 15 秒，再按左侧目录顺序查找下一视频，跳过章节测试、考试和非课节条目。目标所在章节折叠时会点击章节标题展开；目标不在可见区域时只滚动左侧目录。每步操作后重新读取位置，待展开动画结束后再继续。
+视频播放结束后，助手等待 3 秒，再按左侧目录顺序查找下一视频，跳过章节测试、考试和非课节条目。出现练习或其他弹窗时暂停切课，关闭后重新等待 3 秒。实际操作可能因扫描周期或浏览器节流稍晚执行；等待时间不代表平台已经确认进度保存。目标所在章节折叠时会点击章节标题展开；目标不在可见区域时只滚动左侧目录。每步操作后重新读取位置，待展开动画结束后再继续。
 
 切课通过 Chrome 浏览器输入接口执行，不调用网页元素的 `.click()` 来切课。只有目标课节、播放器就绪状态和新视频源均得到确认，才视为成功。目录被遮挡、展开失败、滚动没有进展、切课超时或返回首页时停止，不重复点击，也不自动拉回首页。
 
 随堂练习出现后优先使用已启用的本地题库；未匹配时可请求已配置的 API。整组题目匹配后选择并提交一次。未知题、已有手工选择、无效响应或未知弹窗等待人工处理。章节测试的“跳过”仅表示不点击该目录条目，不修改其完成记录。
+
+## 章节测试（新标签页）
+
+适配 `onlineexamh5new.zhihuishu.com/stuExamWeb.html#/webExamList/dohomework/` 下的章节、单元测试。请自行点击课程目录中的章节测试，平台会打开新标签页；视频连播与测试标签页分别运行，不会自动打开或关闭测试标签页。
+
+1. 在课程页启用需要使用的本地题库和/或 API；API 配置与视频内随堂练习共用。
+2. 打开测试页，从第 1 题点击“启动 / 继续章节助手”。也可先在课程面板勾选“打开的章节测试页自动作答并提交”，之后打开测试页即可自动启动；该开关默认关闭。
+3. 助手核对题干与选项后作答，等待页面确认选中，再点击“下一题”保存。末题点击“暂存作业”。
+4. 仅在全部题目依次处理、末题出现新的暂存成功提示且完成率为 100% 后，点击“提交作业”。可取消“全部保存后自动提交作业”，只暂存并人工交卷。
+
+支持文字单选、多选和判断题；按选项内容匹配，不依赖随机排列的 A/B。题干通过 Chrome 扩展 DOM 接口读取，支持封闭 Shadow DOM。图片、填空、简答、无法解析的文字、未收录且 API 未启用的题目、已有不同答案、保存或翻页失败均停止，保留当前状态。只有交卷阶段的明确提交确认提示会自动确认；含未答提示、未知对话框及真实可见的验证码交给人工处理。
+
+逐题 API 请求共用 5 秒调用间隔和会话次数上限。间隔未满时等待，不向服务商重复请求；网络、认证、额度或答案校验失败后需手动继续。页面刷新会清除本次答题进度跟踪，重新自动处理需回到第 1 题。
+
+已核对真实页面的目录、题型容器、答题卡及封闭题干结构；完整保存和交卷流程目前主要通过离线测试验证，尚未完成真实账户整份测试的自动交卷验证。
 
 ## API 设置
 
@@ -67,7 +82,7 @@ API Key、地址和模型保存在扩展会话存储中，关闭浏览器或重�
 
 `debugger` 是较强的浏览器控制权限，安装或升级时应核对 Chrome 的权限说明。实现只接受本扩展课程页发起的、经重新校验的下一视频请求，不接受任意网址或点击坐标，不自动连接其他标签页。
 
-启用 API 时仅发送题干、题型和选项至所配置的服务，不发送账号、姓名或 Cookie。不使用外部统计服务。最近 200 条切课日志仅保存在当前浏览器，日志不包含 API Key；提交问题前请自行检查日志内容。
+启用 API 时仅发送题干、题型和选项至所配置的服务，不发送账号、姓名或 Cookie。内容脚本仅注入课程域名及上文所列测试页面，章节助手只在对应作业路由中运行。不使用外部统计服务。最近 200 条切课日志仅保存在当前浏览器，日志不包含 API Key；提交问题前请自行检查日志内容。
 
 ## 故障与限制
 
@@ -75,7 +90,7 @@ API Key、地址和模型保存在扩展会话存储中，关闭浏览器或重�
 - 若提示浏览器连接被占用，请关闭该标签页的开发者工具或结束其他正在控制它的浏览器任务。
 - 建议保持课程标签页选中、Chrome 不最小化；长期后台运行尚未验证，浏览器节流可能导致延迟。
 - 不修改学习时长、完成记录或平台校验脚本；登录、验证及未知弹窗需要人工处理。
-- 已按真实页面 DOM 结构适配，并包含 50 项离线自动测试；测试模拟 Chrome 协议和 HTTP 响应，不代表真实环境长期连播已通过验证。
+- 已按真实页面 DOM 结构适配，并包含 78 项离线自动测试；测试模拟 Chrome 协议、HTTP 响应和章节测试状态，不代表真实环境整份交卷或长期连播已通过验证。
 - 仅针对当前适配的课程页面，不保证全部课程、浏览器和网站后续版本都兼容。
 
 ## 开发与打包
@@ -108,4 +123,4 @@ docs/            使用与发布说明
 
 ## 参考
 
-[Chrome debugger](https://developer.chrome.com/docs/extensions/reference/api/debugger) · [Chrome Storage](https://developer.chrome.com/docs/extensions/reference/api/storage) · [Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/) · [DeepSeek API](https://api-docs.deepseek.com/api/create-chat-completion/) · [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
+[Chrome DOM](https://developer.chrome.com/docs/extensions/reference/api/dom) · [Chrome debugger](https://developer.chrome.com/docs/extensions/reference/api/debugger) · [Chrome Storage](https://developer.chrome.com/docs/extensions/reference/api/storage) · [Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/) · [DeepSeek API](https://api-docs.deepseek.com/api/create-chat-completion/) · [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)

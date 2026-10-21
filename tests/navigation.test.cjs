@@ -18,7 +18,7 @@ async function setup(specs,{load=true}={}) {
   });
   entries[0].item.classes.add('current');h.doc.map['.chapter-item']=entries.map(e=>e.item);
   await h.start();
-  return {h,entries,finish:async()=>{h.v.ended=true;h.v.emit('ended');await h.tick();h.advance(15100);await h.tick();}};
+  return {h,entries,finish:async()=>{h.v.ended=true;h.v.emit('ended');await h.tick();h.advance(3100);await h.tick();}};
 }
 test('classifies assessment labels and metadata without excluding lecture about software testing',()=>{
   for(const title of ['章节测试','章末测验','单元考试','测试','期末考试']) assert.equal(catalogKind({number:'1.2',title}),'assessment');
@@ -49,8 +49,28 @@ test('unexpected selected lesson is detected before further playback',async()=>{
   const x=await setup([{number:'1.1',title:'第一节'},{number:'1.2',title:'第二节'},{number:'1.3',title:'第三节'}],{load:false});await x.finish();x.entries[1].item.classes.delete('current');x.entries[2].item.classes.add('current');await x.h.tick();
   assert.equal(x.h.ids.toggle.textContent,'启动助手');assert.match(x.h.ids.status.textContent,/非预期课节/);assert.equal(x.entries[2].box.clicks,0);
 });
-test('browser input is not requested until the full 15-second end wait has elapsed',async()=>{
+test('browser input starts at the 3-second end boundary, never earlier',async()=>{
   const x=await setup([{number:'1.1',title:'第一节'},{number:'1.2',title:'第二节'}]);
-  x.h.v.ended=true;x.h.v.emit('ended');await x.h.tick();x.h.advance(14900);await x.h.tick();assert.equal(x.entries[1].box.clicks,0);
-  x.h.advance(500);await x.h.tick();assert.equal(x.entries[1].box.clicks,1);
+  x.h.v.ended=true;x.h.v.emit('ended');await x.h.tick();x.h.advance(2999);await x.h.tick();assert.equal(x.entries[1].box.clicks,0);
+  x.h.advance(1);await x.h.tick();assert.equal(x.entries[1].box.clicks,1);
+});
+
+test('end wait starts at the ended event even if the next scan is delayed',async()=>{
+  const x=await setup([{number:'1.1',title:'第一节'},{number:'1.2',title:'第二节'}]);
+  x.h.v.ended=true;x.h.v.emit('ended');x.h.advance(3100);await x.h.tick();assert.equal(x.entries[1].box.clicks,1);
+});
+
+for(const blocker of ['quiz','unknown dialog'])test(`a ${blocker} postpones switching and restarts the 3-second wait when closed`,async()=>{
+  const x=await setup([{number:'1.1',title:'第一节'},{number:'1.2',title:'第二节'}]);
+  x.h.v.ended=true;x.h.v.emit('ended');await x.h.tick();x.h.advance(2000);
+  if(blocker==='unknown dialog')x.h.doc.map['.ai-class-exercise-dialog']=[];
+  x.h.dialog.visible=true;await x.h.tick();x.h.advance(10000);await x.h.tick();assert.equal(x.entries[1].box.clicks,0);
+  x.h.dialog.visible=false;await x.h.tick();x.h.advance(2999);await x.h.tick();assert.equal(x.entries[1].box.clicks,0);
+  x.h.advance(1);await x.h.tick();assert.equal(x.entries[1].box.clicks,1);
+});
+
+test('stopping during the shortened end wait prevents the next lesson click',async()=>{
+  const x=await setup([{number:'1.1',title:'第一节'},{number:'1.2',title:'第二节'}]);
+  x.h.v.ended=true;x.h.v.emit('ended');await x.h.tick();x.h.advance(2000);await x.h.ids.toggle.onclick();x.h.advance(10000);await x.h.tick();
+  assert.equal(x.entries[1].box.clicks,0);
 });

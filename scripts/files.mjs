@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 export const root = dirname(dirname(fileURLToPath(import.meta.url)));
 export const runtimeFiles = [
-  'background.js', 'content.js', 'core.js', 'input-controller.js',
+  'background.js', 'content.js', 'core.js', 'input-controller.js', 'chapter-engine.js', 'chapter-dom.js', 'chapter.js',
   'manifest.json', 'options.html', 'options.js',
 ];
 const rootFiles = ['.gitattributes', '.gitignore', 'CHANGELOG.md', 'README.md', 'package.json'];

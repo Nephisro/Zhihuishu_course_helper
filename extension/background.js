@@ -6,6 +6,10 @@ function validSender(sender) {
   try { const url = new URL(sender.url || sender.tab?.url || ''); return !!sender.tab && sender.id === chrome.runtime.id && url.origin === 'https://wisdom-mooc.zhihuishu.com' && url.pathname.startsWith('/study/'); }
   catch { return false; }
 }
+function validChapterSender(sender) {
+  try { const url=new URL(sender.url||'');return !!sender.tab&&sender.id===chrome.runtime.id&&url.origin==='https://onlineexamh5new.zhihuishu.com'&&url.pathname==='/stuExamWeb.html'&&url.hash.startsWith('#/webExamList/dohomework/'); }
+  catch { return false; }
+}
 async function solve(questions) {
   if (inFlight) throw new Error('已有 API 请求正在处理，请稍后手动重试');
   inFlight = true;
@@ -20,7 +24,7 @@ async function solve(questions) {
     const endpoint = new URL(globalThis.ZhsCourseCore.apiEndpoint(config.endpoint));
     if (!await chrome.permissions.contains({origins:[`${endpoint.origin}/*`]})) throw new Error('尚未授权访问这个 API 域名，请重新保存 API 设置');
     if (usage.count >= config.limit) throw new Error('已达到本次浏览器会话调用上限');
-    if (Date.now() - usage.last < 5000) throw new Error('API 调用间隔不足 5 秒，请稍后手动重试');
+    if (Date.now() - usage.last < 5000) { const error=new Error('API 调用间隔不足 5 秒，请稍后手动重试');error.retryAfterMs=5000-(Date.now()-usage.last);throw error; }
     await chrome.storage.session.set({zhsApiUsage:{count:usage.count+1,last:Date.now()}});
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 25000);
@@ -63,7 +67,11 @@ chrome.runtime.onMessage.addListener((message,sender,reply) => {
       .catch(error=>reply({ok:false,error:error.message}));
     return true;
   }
-  if (!validSender(sender)) return false;
+  if (message?.type === 'zhsChapterSolve') {
+    if(!validChapterSender(sender))return false;
+    solve(message.questions).then(bank=>reply({ok:true,bank})).catch(error=>reply({ok:false,error:error.message,...(Number.isFinite(error.retryAfterMs)?{retryAfterMs:error.retryAfterMs}:{})}));return true;
+  }
+  if (!validSender(sender) && !validChapterSender(sender)) return false;
   if (message?.type === 'zhsOpenApi') { chrome.runtime.openOptionsPage(); reply({ok:true}); return false; }
   if (message?.type !== 'zhsSolve') return false;
   solve(message.questions).then(bank=>reply({ok:true,bank})).catch(error=>reply({ok:false,error:error.message}));
