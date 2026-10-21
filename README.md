@@ -78,19 +78,6 @@ API Key、地址和模型保存在扩展会话存储中，关闭浏览器或重�
 - 已按真实页面 DOM 结构适配，并包含 50 项离线自动测试；测试模拟 Chrome 协议和 HTTP 响应，不代表真实环境长期连播已通过验证。
 - 仅针对当前适配的课程页面，不保证全部课程、浏览器和网站后续版本都兼容。
 
-## 开发与打包
-
-没有第三方运行或打包依赖，无需执行 `npm install`。
-
-```sh
-node scripts/check.mjs
-node --test
-node scripts/pack.mjs
-```
-
-也可使用 `npm run check`、`npm test` 和 `npm run pack`。打包产物位于 `dist/`：安装包、源码包及 `SHA256SUMS.txt`。打包采用明确的文件列表，不收集浏览器配置、截图、日志或本地题库。
-
-GitHub Actions 会执行检查、离线测试和打包，并保留构建附件；不会自动发布 GitHub Release。上传步骤见 [GitHub 发布说明](docs/GITHUB_PUBLISH.md)，版本记录见 [CHANGELOG](CHANGELOG.md)。
 
 ## 目录
 
@@ -104,7 +91,7 @@ docs/            使用与发布说明
 
 ## 许可证
 
-当前未指定开源许可证。仓库所有者可按发布意愿添加 `LICENSE`；本打包未代替所有者选择授权条款。
+当前未指定开源许可证。
 
 ## 参考
 
