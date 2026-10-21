@@ -6,9 +6,10 @@
   const query=(selector,scope=document)=>[...scope.querySelectorAll(selector)];
   const enabled=e=>shown(e)&&!e.disabled&&e.getAttribute('aria-disabled')!=='true';
   const own=document.createElement('div');own.id='zhs-chapter-helper';
+  const version=chrome.runtime.getManifest?.().version||'';
   own.style.cssText='position:fixed;right:18px;bottom:18px;z-index:2147483647';
   const ui=own.attachShadow({mode:'open'});
-  ui.innerHTML=`<style>:host{font:14px/1.5 system-ui;color:#e8edf7}section{box-sizing:border-box;width:300px;padding:16px;background:#182333;border:1px solid #44546c;border-radius:14px}h3{margin:0 0 8px}p{white-space:pre-wrap;max-height:140px;overflow:auto}button{padding:7px 10px;margin:4px 4px 4px 0;border:0;border-radius:6px;cursor:pointer}label{display:block;margin:8px 0}small{display:block;color:#c3d1e4}</style><section><h3>章节测试助手</h3><p id="status" role="status">正在读取设置</p><button id="toggle" type="button">开始自动作答并提交</button><button id="api" type="button">API 设置</button><button id="inspect" type="button">查看读取状态</button><label><input id="autoQuiz" type="checkbox" checked> 使用本地题库</label><label><input id="autoApi" type="checkbox"> 新题调用 API</label><label><input id="autoSubmit" type="checkbox" checked> 全部保存后自动提交作业</label><small>从第 1 题启动；题库在课程面板保存。未知题型、已有不同答案和保存失败时暂停；验证码需人工完成。</small></section>`;
+  ui.innerHTML=`<style>:host{font:14px/1.5 system-ui;color:#e8edf7}section{box-sizing:border-box;width:300px;padding:16px;background:#182333;border:1px solid #44546c;border-radius:14px}h3{margin:0 0 8px}p{white-space:pre-wrap;max-height:140px;overflow:auto}button{padding:7px 10px;margin:4px 4px 4px 0;border:0;border-radius:6px;cursor:pointer}label{display:block;margin:8px 0}small{display:block;color:#c3d1e4}</style><section><h3>章节测试助手 ${version?'v'+version:''}</h3><p id="status" role="status">正在读取设置</p><button id="toggle" type="button">开始自动作答并提交</button><button id="api" type="button">API 设置</button><button id="inspect" type="button">查看读取状态</button><label><input id="autoQuiz" type="checkbox" checked> 使用本地题库</label><label><input id="autoApi" type="checkbox"> 新题调用 API</label><label><input id="autoSubmit" type="checkbox" checked> 全部保存后自动提交作业</label><small>从第 1 题启动；题库在课程面板保存。未知题型、已有不同答案和保存失败时暂停；验证码需人工完成。</small></section>`;
   document.documentElement.append(own);
   for(const name of ['click','dblclick','pointerdown','pointerup','keydown','keyup'])own.addEventListener(name,event=>event.stopPropagation());
   const $=id=>ui.getElementById(id);
@@ -31,7 +32,7 @@
     const nodes=subject?query('.subject_node .nodeLab',subject):[];
     const contents=nodes.map(e=>readContent(e.querySelector('.examquestions-answer')));
     const options=contents.map(e=>e.text);
-    const selected=nodes.flatMap((e,i)=>e.querySelector('input')?.checked?[i]:[]);
+    const selected=nodes.flatMap((e,i)=>(e.querySelector('input')?.checked||e.querySelector('.onChecked')||e.getAttribute('aria-checked')==='true')?[i]:[]);
     const cards=query('.answerCard_list li');
     const metadata=query('li').filter(e=>e.querySelector('label')?.textContent.trim()==='题目数');
     const total=metadata.length===1?Number(metadata[0].querySelector('span')?.textContent.trim()):NaN;

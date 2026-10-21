@@ -8,7 +8,7 @@ class E {
   querySelectorAll(s){return this.map[s]||[];}querySelector(s){return this.querySelectorAll(s)[0]||null;}
   getClientRects(){return [{}];}getAttribute(){return null;}addEventListener(){}click(){this.clicks++;this.onClick?.();}
 }
-async function pageHarness({autoChapter=false,title='第一章单元测试'}={}){
+async function pageHarness({autoChapter=false,title='第一章单元测试',highlight=false}={}){
   const ids={},requests=[],timers=[],shadow=new WeakMap(),store={zhsCourseHelper:{autoQuiz:false,autoApi:autoChapter,autoChapter,bank:[]}};
   const document=new E(),root=new E();document.documentElement=root;root.append=()=>{};document.getElementById=()=>null;
   document.createElement=()=>{
@@ -18,7 +18,7 @@ async function pageHarness({autoChapter=false,title='第一章单元测试'}={})
   const subject=new E(),number=new E('1.'),anchor=new E();anchor.id='sample-question';
   const nodes=['选项一','选项二'].map(text=>{
     const node=new E(),answer=new E(text),input=new E(),label=new E();input.checked=false;
-    label.onClick=()=>{nodes.forEach(n=>n.querySelector('input').checked=false);input.checked=true;};
+    label.onClick=()=>{nodes.forEach(n=>{n.querySelector('input').checked=false;n.map['.onChecked']=[];});if(highlight)node.map['.onChecked']=[answer];else input.checked=true;};
     node.map['.examquestions-answer']=[answer];node.map.input=[input];node.map['.label']=[label];return node;
   });
   subject.map['.subject_describe']=[stem];subject.map['.subject_type']=[new E('【单选题】')];subject.map['.subject_num']=[number];subject.map['.subject_num span']=[anchor];subject.map['.subject_node .nodeLab']=nodes;
@@ -45,4 +45,8 @@ test('automatic chapter startup waits for SPA title and stays stopped after manu
   const h=await pageHarness({autoChapter:true,title:''});assert.equal(h.requests.length,0);
   h.heading.innerText='第一章单元测试';h.poll();await new Promise(setImmediate);assert.equal(h.requests.length,1);
   h.ids.toggle.onclick();h.poll();await new Promise(setImmediate);assert.equal(h.requests.length,1);assert.match(h.ids.status.textContent,/已停止/);
+});
+test('platform onChecked highlights count as selected even when hidden input.checked stays false',async()=>{
+  const h=await pageHarness({highlight:true});h.ids.autoApi.checked=true;await h.ids.autoApi.onchange();h.ids.toggle.onclick();await new Promise(setImmediate);
+  assert.equal(h.nodes[1].querySelector('input').checked,false);h.ids.inspect.onclick();assert.match(h.ids.status.textContent,/已选：1/);
 });
