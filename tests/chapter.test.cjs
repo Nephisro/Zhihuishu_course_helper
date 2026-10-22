@@ -4,7 +4,7 @@ const {createRunner,isChapter,submissionPrompt,savingPrompt}=require('../extensi
 const {rendered,visibleOverlay,readContent}=require('../extension/chapter-dom.js');
 
 function fixture({autoApi=false,autoSubmit=true,solve,bank,questions}={}){
-  let clock=100000,index=0,last='';
+  let clock=100000,index=0,last='';const statuses=[];
   const qs=questions||[
     {id:'q1',number:1,type:'single',question:'单选示例',options:['一','二'],selected:[]},
     {id:'q2',number:2,type:'multiple',question:'多选示例',options:['一','二','三'],selected:[]},
@@ -13,7 +13,7 @@ function fixture({autoApi=false,autoSubmit=true,solve,bank,questions}={}){
   const state={examKey:'test-exam',title:'第一章单元测试',total:qs.length,progress:0,savedNotice:'',dialog:null,captcha:false,submitted:false};
   const calls={select:0,next:0,save:0,submit:0,confirm:0,api:0};
   const page={
-    read:()=>structuredClone({...state,question:qs[index]}),
+    read:()=>structuredClone({...state,atLastQuestion:state.atLastQuestion??index===qs.length-1,question:qs[index]}),
     select:indices=>{calls.select++;qs[index].selected=[...indices];state.progress=Math.round(qs.filter(q=>q.selected.length).length/qs.length*100);},
     next:()=>{calls.next++;index++;},
     save:()=>{calls.save++;state.progress=100;state.savedNotice='saved-unique:暂存成功';},
@@ -23,9 +23,9 @@ function fixture({autoApi=false,autoSubmit=true,solve,bank,questions}={}){
   const config={autoQuiz:!autoApi,autoApi,autoSubmit,bank:bank||[
     {question:'单选示例',answers:['二']},{question:'多选示例',answers:['三','一']},{question:'判断示例',answers:['对']},
   ]};
-  const runner=createRunner({page,now:()=>clock,status:text=>last=text,solve:async questions=>{calls.api++;return solve?solve(questions):{ok:false,error:'mock failure'};}});
+  const runner=createRunner({page,now:()=>clock,status:text=>{last=text;statuses.push(text);},solve:async questions=>{calls.api++;return solve?solve(questions):{ok:false,error:'mock failure'};}});
   runner.start(config);
-  return {runner,page,state,calls,qs,config,get last(){return last;},get index(){return index;},set index(v){index=v;},advance:ms=>clock+=ms,
+  return {runner,page,state,calls,qs,config,statuses,get last(){return last;},get index(){return index;},set index(v){index=v;},advance:ms=>clock+=ms,
     tick:()=>runner.tick(),finish:async()=>{for(let i=0;i<20&&runner.running;i++){await runner.tick();clock+=1000;}}};
 }
 
@@ -91,19 +91,43 @@ test('unexpected question jump or next-page timeout does not repeat navigation',
   const jump=fixture();await jump.tick();await jump.tick();jump.index=2;await jump.tick();assert.equal(jump.calls.next,1);assert.equal(jump.calls.submit,0);assert.equal(jump.runner.running,false);
   const timeout=fixture();timeout.page.next=()=>timeout.calls.next++;await timeout.tick();await timeout.tick();timeout.advance(15001);await timeout.tick();assert.equal(timeout.calls.next,1);assert.equal(timeout.runner.running,false);
 });
-test('saving requires both a new positive notice and 100 percent progress',async()=>{
-  for(const saved of [{progress:100,savedNotice:''},{progress:90,savedNotice:'new:暂存成功'}]){
+test('saving requires a new positive notice and a terminal page, independently of progress',async()=>{
+  for(const saved of [{progress:100,savedNotice:''},{progress:100,savedNotice:'new:暂存成功',atLastQuestion:false}]){
     const h=fixture({autoSubmit:false});h.page.save=()=>{h.calls.save++;Object.assign(h.state,saved);};await h.finish();h.advance(16000);await h.tick();
     assert.equal(h.calls.submit,0);assert.equal(h.calls.save,1);assert.equal(h.runner.running,false);
   }
+  const h=fixture({autoSubmit:false});h.page.save=()=>{h.calls.save++;h.state.progress=80;h.state.savedNotice='new:暂存成功';};
+  await h.finish();assert.equal(h.runner.completed,true);assert.equal(h.calls.submit,0);
 });
 test('actual save-confirmation prompt is accepted once before waiting for saved success',async()=>{
-  const h=fixture({autoSubmit:false});h.page.save=()=>{h.calls.save++;h.state.progress=100;h.state.dialog={text:'你确定要暂存作业吗',confirmable:true};};
+  const h=fixture({autoSubmit:false});h.page.save=()=>{h.calls.save++;h.state.progress=80;h.state.dialog={text:'你确定要暂存作业吗',confirmable:true};};
   const confirmed=[];h.page.confirm=kind=>{h.calls.confirm++;confirmed.push(kind);h.state.dialog=null;if(kind==='save')h.state.savedNotice='actual-save-success:暂存成功';else h.state.submitted=true;};
   await h.finish();assert.deepEqual(confirmed,['save']);assert.equal(h.calls.save,1);assert.equal(h.calls.submit,0);assert.equal(h.runner.completed,true);
 });
-test('direct submission waits for platform completeness and never falls back to temporary save',async()=>{
-  const h=fixture();const select=h.page.select;h.page.select=indices=>{select(indices);h.state.progress=90;};await h.finish();assert.equal(h.calls.submit,0);assert.equal(h.calls.save,0);assert.equal(h.runner.running,false);
+test('terminal navigation permits direct submission even with stale or missing progress',async()=>{
+  for(const progress of [80,undefined]){
+    const h=fixture();const select=h.page.select;h.page.select=indices=>{select(indices);h.state.progress=progress;};
+    await h.finish();assert.equal(h.calls.submit,1);assert.equal(h.calls.save,0);assert.equal(h.runner.completed,true);
+  }
+});
+
+test('terminal navigation is required for both submission and optional saving',async()=>{
+  for(const autoSubmit of [true,false]){
+    for(const marker of [false,undefined]){
+      const h=fixture({autoSubmit});const read=h.page.read;h.page.read=()=>({...read(),atLastQuestion:marker});await h.finish();
+      assert.equal(h.state.progress,100);assert.equal(h.calls.submit,0);assert.equal(h.calls.save,0);assert.equal(h.runner.running,false);
+      assert.doesNotMatch(h.statuses.join('\n'),/完成率|100%|下一题.*消失|保存.*出现|检测/);
+    }
+  }
+});
+
+test('terminal marker still requires the final answer selection to be confirmed',async()=>{
+  const h=fixture({questions:[{id:'q1',number:1,type:'single',question:'单选示例',options:['一','二'],selected:[]}]});
+  h.page.select=()=>h.calls.select++;await h.finish();assert.equal(h.calls.submit,0);assert.equal(h.calls.save,0);
+});
+
+test('terminal marker on an earlier question does not skip ordered answering',async()=>{
+  const h=fixture();h.state.atLastQuestion=true;await h.finish();assert.equal(h.calls.next,2);assert.equal(h.calls.select,3);assert.equal(h.calls.submit,1);
 });
 test('an incomplete-answer confirmation is never automatically accepted',async()=>{
   const h=fixture();h.page.submit=()=>{h.calls.submit++;h.state.dialog={text:'还有未答题，是否提交作业？',confirmable:true};};await h.finish();

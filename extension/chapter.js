@@ -21,6 +21,15 @@
     if(found.length!==1)throw new Error(`无法唯一确认“${text}”按钮`);
     return found[0];
   }
+  function navigation(){
+    const regions=query('.switch-btn-box').filter(shown);
+    if(regions.length!==1)return null;
+    const buttons=query('button',regions[0]).filter(shown);
+    return {region:regions[0],atLastQuestion:
+      !buttons.some(e=>e.textContent.trim()==='下一题')&&
+      buttons.filter(e=>e.textContent.trim()==='保存').length===1&&
+      buttons.some(e=>e.textContent.trim()==='保存'&&enabled(e))};
+  }
   function read(){
     const title=document.querySelector('h1')?.innerText.trim()||'';
     const subjects=query('.examPaper_subject').filter(shown);
@@ -44,7 +53,7 @@
     const confirmations=dialog?query('button',dialog).filter(e=>enabled(e)&&/^(确定|确认|确认提交|确定提交|提交作业)$/.test(e.textContent.trim())):[];
     return {
       examKey:location.origin+location.pathname+location.hash,title,total:validCards?total:NaN,
-      progress:Number((document.querySelector('.percentage_tit em')?.textContent||'').replace('%','').trim()),
+      atLastQuestion:navigation()?.atLastQuestion===true,
       savedNotice:saved?`${saved.id}:${saved.innerText.trim()}`:'',
       submitted:messages.some(e=>/(?:提交|交卷)成功|作业已提交/.test(e.innerText))||dialogs.some(e=>/(?:提交|交卷)成功/.test(e.innerText)),
       captcha:query('iframe').some(e=>/captcha/i.test(e.id+' '+e.getAttribute('src'))&&visibleOverlay(e)),
@@ -68,7 +77,8 @@
         (option.querySelector('.label')||option).click();
       }
     },
-    next(){button('下一题').click();},save(){button('暂存作业').click();},submit(){button('提交作业').click();},
+    next(){const nav=navigation();if(!nav)throw new Error('页面尚未就绪');button('下一题',nav.region).click();},
+    save(){button('暂存作业').click();},submit(){button('提交作业').click();},
     confirm(kind='submit'){
       const s=read();
       const check=kind==='save'?globalThis.ZhsChapterEngine.savingPrompt:globalThis.ZhsChapterEngine.submissionPrompt;

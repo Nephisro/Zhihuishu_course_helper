@@ -1,6 +1,6 @@
 {
   "name": "zhihuishu-course-helper",
-  "version": "1.5.3",
+  "version": "1.5.5",
   "private": true,
   "description": "智慧树课程辅助扩展：目录连播、章节测试、随堂练习、本地题库及可选 API。",
   "engines": { "node": ">=22" },

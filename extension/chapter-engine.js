@@ -30,7 +30,7 @@
         if(!isChapter(s.title)){stop('当前不是可识别的章节测试，请人工处理');return;}
         if(exam&&s.examKey!==exam.key){stop('测试页面已变化，已停止');return;}
         if(s.dialog){
-          if(phase==='save'&&!saveConfirmed&&savingPrompt(s.dialog.text)&&s.dialog.confirmable&&s.progress===100&&s.question&&fingerprint(s.question)===mark&&sameIndices(s.question.selected,plan)){
+          if(phase==='save'&&!saveConfirmed&&savingPrompt(s.dialog.text)&&s.dialog.confirmable&&s.atLastQuestion===true&&s.question&&fingerprint(s.question)===mark&&sameIndices(s.question.selected,plan)){
             saveConfirmed=true;page.confirm('save');deadline=now()+15000;status('已确认暂存，等待平台保存结果');return;
           }
           if(phase==='submit'&&!confirmed&&submissionPrompt(s.dialog.text)&&s.dialog.confirmable){
@@ -58,14 +58,14 @@
         if(q.number!==expected){stop('当前题号已变化，请人工核对');return;}
         if(phase==='save'){
           if(fingerprint(q)!==mark||!sameIndices(q.selected,plan)){stop('末题答案发生变化，取消交卷');return;}
-          if(s.savedNotice&&s.savedNotice!==beforeNotice&&s.progress===100){
+          if(s.savedNotice&&s.savedNotice!==beforeNotice&&s.atLastQuestion===true){
             saved.add(expected);
             if(saved.size!==exam.total){stop('尚未确认全部题目保存，取消交卷');return;}
             if(!config.autoSubmit){completed=true;stop('所有题目已暂存，请人工提交作业');return;}
             phase='submit';deadline=now()+15000;page.submit();status('所有题目已保存，已请求提交作业');return;
           }
-          if(now()>=deadline)stop('末题暂存成功及完成率 100% 未得到确认，请人工核对；不会交卷');
-          else status('等待末题暂存成功及完成率 100%，暂不交卷');
+          if(now()>=deadline)stop('暂存结果未得到确认，请人工核对');
+          else status('正在等待暂存结果');
           return;
         }
         if(phase==='verify'){
@@ -75,11 +75,13 @@
             return;
           }
           if(expected<exam.total){phase='next';deadline=now()+15000;page.next();status(`第 ${expected} 题已作答，保存并进入下一题`);}
-          else if(config.autoSubmit){
-            if(s.progress!==100){if(now()>=deadline)stop('全部题目已作答，但平台完成率尚未达到 100%，请人工核对');else status('全部题目已作答，等待平台完成率达到 100%');return;}
+          else {
+            if(s.atLastQuestion!==true){if(now()>=deadline)stop('页面尚未就绪，请人工核对');else status('正在等待页面就绪');return;}
             if(saved.size!==exam.total-1){stop('尚未确认已依次处理全部题目，取消交卷');return;}
-            phase='submit';deadline=now()+15000;page.submit();status('全部题目已作答，已请求提交作业');
-          } else {phase='save';saveConfirmed=false;beforeNotice=s.savedNotice||'';deadline=now()+15000;page.save();status('末题已作答，正在暂存整份测试');}
+            if(config.autoSubmit){
+              phase='submit';deadline=now()+15000;page.submit();status('全部题目已作答，已请求提交作业');
+            } else {phase='save';saveConfirmed=false;beforeNotice=s.savedNotice||'';deadline=now()+15000;page.save();status('末题已作答，正在暂存整份测试');}
+          }
           return;
         }
         if(!['single','multiple','boolean'].includes(q.type)||q.options.length<2||q.options.some(o=>!o.trim())||q.unsupportedMedia){stop(`第 ${expected} 题题型或内容不支持，请人工处理`);return;}

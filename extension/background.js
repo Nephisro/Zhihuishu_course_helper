@@ -1,5 +1,6 @@
 'use strict';
 importScripts('core.js');
+importScripts('api-config.js');
 importScripts('input-controller.js');
 let inFlight = false;
 function validSender(sender) {
@@ -19,7 +20,8 @@ async function solve(questions) {
         q.options.length < 2 || q.options.length > 20 || q.options.some(o=>typeof o !== 'string' || !o.trim()) || typeof q.multiple !== 'boolean')) {
       throw new Error('题目结构不支持，等待人工作答');
     }
-    const {zhsApi: config, zhsApiUsage: usage = {count:0,last:0}} = await chrome.storage.session.get(['zhsApi','zhsApiUsage']);
+    const config=await globalThis.ZhsApiConfig.read(chrome.storage);
+    const {zhsApiUsage: usage = {count:0,last:0}} = await chrome.storage.session.get('zhsApiUsage');
     if (!config?.key || !config.endpoint || !config.model) throw new Error('请先在 API 设置中填写服务地址、模型和密钥');
     const endpoint = new URL(globalThis.ZhsCourseCore.apiEndpoint(config.endpoint));
     if (!await chrome.permissions.contains({origins:[`${endpoint.origin}/*`]})) throw new Error('尚未授权访问这个 API 域名，请重新保存 API 设置');

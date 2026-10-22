@@ -15,7 +15,7 @@
 ```sh
 git init -b main
 git add .
-git commit -m "Initial release v1.5.3"
+git commit -m "Initial release v1.5.5"
 ```
 
 将下方占位值替换为自己的远程仓库地址，然后执行：
@@ -31,12 +31,12 @@ git push -u origin main
 
 在 GitHub 创建仓库，在仓库中选择 Add file → Upload files，上传解压后的项目文件及文件夹。确认 `.github/`、`.gitignore` 等点号开头的文件也被包含。不要只上传项目 ZIP，否则 GitHub 不会直接显示源码或执行工作流。
 
-## 创建 v1.5.3 Release
+## 创建 v1.5.5 Release
 
 1. 先执行 `node scripts/check.mjs`、`node --test`、`node scripts/pack.mjs`。
-2. 在仓库 Releases 中创建版本，标签填写 `v1.5.3`，目标选择已上传的主分支。
-3. 标题可填写“v1.5.3：章节测试助手与 3 秒切课等待”。说明可摘自 `CHANGELOG.md`，保留“尚未验证长期后台及连续运行”的限制。
-4. 附加 `dist/zhihuishu-course-helper-v1.5.3.zip` 和 `dist/SHA256SUMS.txt`；按需附加源码 ZIP。
+2. 在仓库 Releases 中创建版本，标签填写 `v1.5.5`，目标选择已上传的主分支。
+3. 标题可填写“v1.5.5：API 配置持久保存”。说明可摘自 `CHANGELOG.md`，保留“尚未验证长期后台及连续运行”的限制。
+4. 附加 `dist/zhihuishu-course-helper-v1.5.5.zip` 和 `dist/SHA256SUMS.txt`；按需附加源码 ZIP。
 5. 检查内容后自行发布。
 
 用户从源码安装时加载 `extension/`；从 Release 安装包安装时加载解压后的 `zhihuishu-course-helper/`。完整说明见仓库 README。

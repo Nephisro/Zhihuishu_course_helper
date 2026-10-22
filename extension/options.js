@@ -4,10 +4,10 @@ $('loadLog').onclick=async()=>{
   try{const {zhsSwitchLog=[]}=await chrome.storage.local.get('zhsSwitchLog');$('switchLog').value=zhsSwitchLog.length?JSON.stringify(zhsSwitchLog,null,2):'尚无切课记录';}
   catch(error){$('switchLog').value=`读取失败：${error.message}`;}
 };
-chrome.storage.session.get(['zhsApi','zhsApiUsage']).then(({zhsApi:config,zhsApiUsage}) => {
+Promise.all([globalThis.ZhsApiConfig.read(chrome.storage),chrome.storage.session.get('zhsApiUsage')]).then(([config,{zhsApiUsage}]) => {
   if (config) for (const field of ['endpoint','model','key','limit']) $(field).value = config[field];
   $('status').textContent = `本次会话已调用 ${zhsApiUsage?.count || 0} 次`;
-});
+}).catch(error=>{$('status').textContent=`读取 API 设置失败：${error.message}`;});
 $('save').onclick = async () => {
   try {
     const endpoint = new URL(globalThis.ZhsCourseCore.apiEndpoint($('endpoint').value));
@@ -15,9 +15,9 @@ $('save').onclick = async () => {
     if (!model || !key || !Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error('请填写模型和 API Key，调用上限为 1–500 的整数');
     const granted = await chrome.permissions.request({origins:[`${endpoint.origin}/*`]});
     if (!granted) throw new Error('未授权 API 域名访问权限');
-    await chrome.storage.session.set({zhsApi:{endpoint:endpoint.href,model,key,limit}});
+    await globalThis.ZhsApiConfig.save(chrome.storage,{endpoint:endpoint.href,model,key,limit});
     $('endpoint').value = endpoint.href;
-    $('status').textContent = `已保存，实际请求地址：${endpoint.href}\n请先点击“测试 API 答题”，通过后回到课程页勾选“新题调用 API”。`;
+    $('status').textContent = `已保存到本机，关闭浏览器后仍保留。实际请求地址：${endpoint.href}\n请先点击“测试 API 答题”，通过后回到课程页勾选“新题调用 API”。`;
   } catch (error) { $('status').textContent = error.message; }
 };
 $('test').onclick = async () => {
@@ -31,7 +31,9 @@ $('test').onclick = async () => {
   finally { $('test').disabled = false; }
 };
 $('clear').onclick = async () => {
-  await chrome.storage.session.remove('zhsApi');
-  for (const field of ['endpoint','model','key']) $(field).value = '';
-  $('status').textContent = 'API 配置和密钥已清除；调用计数保留。已发出的请求可能仍会完成。';
+  try {
+    await globalThis.ZhsApiConfig.clear(chrome.storage);
+    for (const field of ['endpoint','model','key']) $(field).value = '';
+    $('status').textContent = '本机 API 配置和密钥已清除；本次会话调用计数保留。已发出的请求可能仍会完成。';
+  } catch(error) { $('status').textContent=`清除 API 设置失败：${error.message}`; }
 };

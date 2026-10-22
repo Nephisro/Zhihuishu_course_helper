@@ -3,12 +3,14 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 const core=require('../extension/core.js');
+const apiConfig=require('../extension/api-config.js');
 const qs=[{question:'题目',options:['正确','错误'],multiple:false}];
 function harness({limit=30,count=0,status=200,content='{"answers":[{"id":0,"answers":["正确"]}]}',permission=true,abort=false,endpoint='https://api.example.test/v1/chat/completions'}={}) {
   let listener,request,calls=0;
   const data={zhsApi:{endpoint,model:'test-model',key:'TEST_ONLY_NOT_A_REAL_KEY',limit},zhsApiUsage:{count,last:0}};
-  const context={globalThis:null,ZhsCourseCore:core,URL,AbortController,setTimeout:()=>1,clearTimeout(){},importScripts(){},
-    chrome:{runtime:{id:'test-extension',onMessage:{addListener:fn=>listener=fn}},storage:{session:{get:async()=>data,set:async value=>Object.assign(data,value)}},permissions:{contains:async()=>permission}},
+  const sessionData={zhsApiUsage:data.zhsApiUsage};
+  const context={globalThis:null,ZhsCourseCore:core,ZhsApiConfig:apiConfig,URL,AbortController,setTimeout:()=>1,clearTimeout(){},importScripts(){},
+    chrome:{runtime:{id:'test-extension',onMessage:{addListener:fn=>listener=fn}},storage:{local:{get:async()=>data},session:{get:async()=>sessionData,set:async value=>Object.assign(sessionData,value)}},permissions:{contains:async()=>permission}},
     fetch:async(url,options)=>{calls++;request={url,options};if(abort)throw Object.assign(new Error(),{name:'AbortError'});return {ok:status===200,status,json:async()=>({choices:[{message:{content}}]})};}};
   context.globalThis=context;vm.runInNewContext(fs.readFileSync(require.resolve('../extension/background.js'),'utf8'),context);
   const sender={id:'test-extension',tab:{url:'https://wisdom-mooc.zhihuishu.com/study/index'}};
