@@ -4,9 +4,9 @@
 
 ## 推荐仓库内容
 
-上传当前项目目录中的 `extension/`、`tests/`、`scripts/`、`docs/`、`.github/`、`.gitignore`、`.gitattributes`、`package.json`、`README.md` 和 `CHANGELOG.md`。不把安装 ZIP 作为唯一的仓库内容。
+上传当前项目目录中的 `extension/`、`tests/`、`scripts/`、`docs/`、`.github/`、`.gitignore`、`.gitattributes`、`package.json`、`README.md`、`CHANGELOG.md` 和 `LICENSE`。不把安装 ZIP 作为唯一的仓库内容。
 
-`dist/` 是生成目录，已由 `.gitignore` 排除。面向用户的安装 ZIP 放在 GitHub Release 的附件中。当前没有选择开源许可证，如需授予开源使用权，请先自行选择并添加 `LICENSE`。
+`dist/` 是生成目录，已由 `.gitignore` 排除。面向用户的安装 ZIP 放在 GitHub Release 的附件中。项目采用 MIT License，分发时应保留 `LICENSE` 中的版权与许可声明。
 
 ## 方式一：通过 Git 上传
 
