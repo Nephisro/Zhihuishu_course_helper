@@ -1,4 +1,4 @@
-// Browser-level catalog expansion, scoped scrolling and one next-video click.
+// Browser-level catalog expansion, scoped scrolling and one validated entry click.
 (() => {
   'use strict';
   const jobs=new Map();
@@ -30,8 +30,18 @@
     });
     const selected=entries.filter(e=>e.item.classList.contains('current'));
     if(selected.length!==1||selected[0].key!==payload.from)throw new Error('当前课节已变化，取消点击');
-    const next=entries.slice(entries.indexOf(selected[0])+1).find(e=>e.kind==='video');
-    if(!next||next.key!==payload.to||entries.filter(e=>e.key===payload.to).length!==1)throw new Error('下一视频条目已变化或不唯一，取消点击');
+    let next;
+    if(payload.chapter){
+      const chapter=selected[0].item.closest('.el-collapse-item');
+      const chapterKey=chapter?JSON.stringify([chapter.querySelector('.chapter-title')?.textContent.trim()||'',chapter.querySelector('.chapter-name')?.textContent.trim()||'']):'';
+      const videos=entries.filter(e=>e.kind==='video'&&e.item.closest('.el-collapse-item')===chapter);
+      const tests=chapter?[...chapter.querySelectorAll('.test-box')]:[];
+      if(chapterKey!==payload.chapter||videos.at(-1)!==selected[0]||tests.length!==1||!/^(?:测试|章节测试|单元测试)$/.test(tests[0].textContent.trim()))throw new Error('无法确认本章末节及测试入口');
+      next={item:tests[0],target:tests[0]};
+    }else{
+      next=entries.slice(entries.indexOf(selected[0])+1).find(e=>e.kind==='video');
+      if(!next||next.key!==payload.to||entries.filter(e=>e.key===payload.to).length!==1)throw new Error('下一视频条目已变化或不唯一，取消点击');
+    }
     const lesson=next.target;
     if(!lesson||lesson.matches('[disabled],[aria-disabled="true"]')||next.item.getAttribute('aria-disabled')==='true')throw new Error('下一视频不可用');
     if([...document.querySelectorAll('[role="dialog"],.el-dialog')].some(e=>shown(e)&&e.textContent.trim()))throw new Error('存在弹窗，取消切课');
@@ -78,17 +88,18 @@
   }
   async function switchVideo(payload,sender) {
     const tabId=sender.tab.id,originUrl=sender.url||sender.tab.url,target={tabId};
-    if(typeof payload.from!=='string'||typeof payload.to!=='string'||payload.from.length>800||payload.to.length>800)throw new Error('课节参数无效');
+    const opening=payload.type==='zhsOpenChapterTest',destination=opening?payload.chapter:payload.to;
+    if(typeof payload.from!=='string'||typeof destination!=='string'||!destination||payload.from.length>800||destination.length>800)throw new Error('课节参数无效');
     if(jobs.has(tabId))throw new Error('此标签页已有切课请求，不重复点击');
-    const job={cancelled:false};jobs.set(tabId,job);let attached=false;
+    const job={cancelled:false};jobs.set(tabId,job);let attached=false,flow=null;
     const check=()=>{if(job.cancelled)throw new Error('切课已由用户停止');};
     try {
-      await record('switch_requested',{from:payload.from,to:payload.to});
+      await record(opening?'chapter_test_requested':'switch_requested',{from:payload.from,...(opening?{chapter:payload.chapter}:{to:payload.to})});
       try{await chrome.debugger.attach(target,'1.3');attached=true;}catch{throw new Error('无法连接浏览器输入：请关闭此标签页开发者工具或结束其他浏览器控制任务，并确认已批准新版 debugger 权限');}
       await chrome.debugger.sendCommand(target,'Page.enable');check();
       const before=await read(target,`(${snapshot.toString()})()`);
       if(!sameCourse(before.url,originUrl))throw new Error('已离开原课程，取消切课');
-      const expression=`(()=>{const normalize=${globalThis.ZhsCourseCore.normalize.toString()};const classify=${globalThis.ZhsCourseCore.catalogKind.toString()};return (${clickPoint.toString()})(${JSON.stringify({from:payload.from,to:payload.to})},classify);})()`;
+      const expression=`(()=>{const normalize=${globalThis.ZhsCourseCore.normalize.toString()};const classify=${globalThis.ZhsCourseCore.catalogKind.toString()};return (${clickPoint.toString()})(${JSON.stringify({from:payload.from,...(opening?{chapter:payload.chapter}:{to:payload.to})})},classify);})()`;
       let point=null,scrollSteps=0,lastScroll=null,stalledScroll=0;
       const expanded=new Map(),prepareUntil=Date.now()+20000;
       while(Date.now()<prepareUntil) {
@@ -119,6 +130,10 @@
       }
       if(!point)throw new Error('20 秒内未能完成目录展开与定位，已停止');
       check();if(!sameCourse(point.url,originUrl))throw new Error('点击前课程地址已变化');
+      if(opening){
+        flow=await globalThis.ZhsChapterFlow.arm({sourceTabId:tabId,sourceUrl:originUrl,from:payload.from,chapter:payload.chapter});
+        check();if(flow.alreadyCompleted)return {ok:true,alreadyCompleted:true,chapter:payload.chapter};
+      }
       await record('input_dispatch',{from:payload.from,to:payload.to});
       await chrome.debugger.sendCommand(target,'Input.dispatchMouseEvent',{type:'mouseMoved',x:point.x,y:point.y,buttons:0});check();
       await chrome.debugger.sendCommand(target,'Input.dispatchMouseEvent',{type:'mousePressed',x:point.x,y:point.y,button:'left',buttons:1,clickCount:1});
@@ -129,12 +144,20 @@
         check();
         const state=await read(target,`(${snapshot.toString()})()`);
         if(!sameCourse(state.url,originUrl)){await record('navigation_away',{route:route(state.url)});throw new Error('浏览器点击后离开课程页，已停止；请查看切课日志');}
+        if(opening){
+          if(state.current!==payload.from)throw new Error('打开测试时原课节已变化，请人工核对');
+          const current=await globalThis.ZhsChapterFlow.state(tabId,flow.id);
+          if(current.phase==='failed')throw new Error(current.error);
+          if(['active','returning','done'].includes(current.phase)){await record('chapter_test_opened',{chapter:payload.chapter});return {ok:true,id:flow.id,chapter:payload.chapter};}
+          await new Promise(resolve=>setTimeout(resolve,500));continue;
+        }
         if(state.current===payload.to&&state.video&&!state.video.ended&&state.video.ready>=1&&state.video.src&&state.video.src!==point.src){await record('switch_confirmed',{to:payload.to});return {ok:true,target:payload.to};}
         if(state.current&&state.current!==payload.from&&state.current!==payload.to)throw new Error('切到了非预期课节，已停止');
         await new Promise(resolve=>setTimeout(resolve,500));
       }
       throw new Error('20 秒内未确认目标课节及新视频源；不会重复点击');
     } catch(error) {
+      if(flow?.id)await globalThis.ZhsChapterFlow.cancel(tabId,error.message);
       if(attached){try{const tree=await chrome.debugger.sendCommand(target,'Page.getFrameTree');const url=tree.frameTree?.frame?.url;if(url&&!sameCourse(url,originUrl))await record('navigation_away',{route:route(url)});}catch{}}
       await record('switch_failed',{error:error.message});throw error;
     }
@@ -142,8 +165,8 @@
   }
   chrome.runtime.onMessage.addListener((message,sender,reply)=>{
     if(!allowed(sender))return false;
-    if(message?.type==='zhsCancelNext'){const job=jobs.get(sender.tab.id);if(job)job.cancelled=true;reply({ok:true});return false;}
-    if(message?.type!=='zhsNextVideo')return false;
+    if(message?.type==='zhsCancelNext'){const job=jobs.get(sender.tab.id);if(job)job.cancelled=true;void globalThis.ZhsChapterFlow?.cancel(sender.tab.id).catch(()=>{});reply({ok:true});return false;}
+    if(!['zhsNextVideo','zhsOpenChapterTest'].includes(message?.type))return false;
     switchVideo(message,sender).then(reply).catch(error=>reply({ok:false,error:error.message}));return true;
   });
 })();

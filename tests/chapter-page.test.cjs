@@ -8,8 +8,8 @@ class E {
   querySelectorAll(s){return this.map[s]||[];}querySelector(s){return this.querySelectorAll(s)[0]||null;}
   getClientRects(){return this.hidden?[]:[{}];}getAttribute(){return null;}addEventListener(){}click(){this.clicks++;this.onClick?.();}
 }
-async function pageHarness({autoChapter=false,title='第一章单元测试',highlight=false,progress=100,navigation='last'}={}){
-  const ids={},requests=[],timers=[],shadow=new WeakMap(),store={zhsCourseHelper:{autoQuiz:false,autoApi:autoChapter,autoChapter,bank:[]}};
+async function pageHarness({autoChapter=false,title='第一章单元测试',highlight=false,progress=100,navigation='last',managed=false,submitSuccess=true,api=false,feedback=null,preexistingFeedback=false,flowId='managed-flow',onComplete}={}){
+  const ids={},requests=[],timers=[],shadow=new WeakMap(),store={zhsCourseHelper:{autoQuiz:false,autoApi:autoChapter||api,autoChapter,bank:[]}};
   const document=new E(),root=new E();document.documentElement=root;root.append=()=>{};document.getElementById=()=>null;
   document.createElement=()=>{
     const host=new E();host.attachShadow=()=>({set innerHTML(html){for(const m of html.matchAll(/id="([^"]+)"/g))ids[m[1]]=new E();ids.autoSubmit.checked=true;},getElementById:id=>ids[id]});return host;
@@ -29,18 +29,34 @@ async function pageHarness({autoChapter=false,title='第一章单元测试',high
   nav.map.button=[next,bottomSave];next.hidden=navigation==='last';bottomSave.hidden=navigation==='next';
   document.map['.switch-btn-box']=navigation==='missing'?[]:navigation==='duplicate'?[nav,new E()]:[nav];
   const submit=new E('提交作业'),save=new E('暂存作业'),confirm=new E('\n  确定\n'),cancel=new E('取消'),dialog=new E('提示\n是否确认提交?提交后,批阅过的试卷不能再修改!\n取消确定');
+  const resultDialog=new E('同学\n'+(feedback?.text||'恭喜你本章测试取得满分！')+'\n每日6点更新\n返回作业考试\n练一练');
+  const returnButton=new E('返回作业考试'),practiceButton=new E('练一练');
+  resultDialog.map['.userinfo .desc']=[new E(feedback?.text||'恭喜你本章测试取得满分！')];
+  resultDialog.map['.btns button']=feedback?.missingActions?[]:[returnButton,practiceButton];
+  resultDialog.hidden=!!feedback?.hidden;
+  const showFeedback=()=>{
+    document.map['.el-dialog,.el-message-box']=[resultDialog];
+    document.map['.el-dialog.dialog-has-ai-training-btn']=feedback?.wrongClass?[]:[resultDialog];
+  };
   dialog.map.button=[cancel,confirm];document.map.button=[submit,save,outsideSave,next,bottomSave];
+  if(preexistingFeedback)showFeedback();
   submit.onClick=()=>{document.map['.el-dialog,.el-message-box']=[dialog];};
-  confirm.onClick=()=>{document.map['.el-dialog,.el-message-box']=[];const notice=new E('提交成功');notice.id='submit-success';document.map['.el-message']=[notice];};
+  confirm.onClick=()=>{document.map['.el-dialog,.el-message-box']=[];if(feedback)showFeedback();else if(submitSuccess){const notice=new E('提交成功');notice.id='submit-success';document.map['.el-message']=[notice];}};
+  let messageHandler;const lifecycle=[];
   const sandbox={globalThis:null,document,location:new URL('https://onlineexamh5new.zhihuishu.com/stuExamWeb.html#/webExamList/dohomework/example'),window:{addEventListener(){}},
     getComputedStyle:()=>({display:'block',visibility:'visible',opacity:'1'}),setInterval:fn=>{timers.push(fn);return 1;},clearInterval(){},
     chrome:{dom:{openOrClosedShadowRoot:e=>shadow.get(e)||null},storage:{onChanged:{addListener(){}},local:{get:async()=>store,set:async value=>Object.assign(store,value)}},
-      runtime:{sendMessage:async message=>{requests.push(message);return {ok:true,bank:[{question:'封闭题干示例',answers:['选项二']}]};}}},
+      runtime:{id:'test-extension',onMessage:{addListener:fn=>messageHandler=fn},sendMessage:async message=>{
+        if(message.type==='zhsChapterFlowClaim')return {ok:true,managed,id:flowId};
+        if(message.type==='zhsChapterFlowComplete'){lifecycle.push(message);return onComplete?onComplete(message):{ok:true};}
+        requests.push(message);return {ok:true,bank:[{question:'封闭题干示例',answers:['选项二']}]};
+      }}},
   };
   sandbox.globalThis=sandbox;
   for(const file of ['core.js','chapter-engine.js','chapter-dom.js','chapter.js'])vm.runInNewContext(fs.readFileSync(require.resolve('../extension/'+file),'utf8'),sandbox);
   await new Promise(setImmediate);
-  return {ids,requests,nodes,store,heading,submit,save,confirm,cancel,nav,next,bottomSave,outsideSave,poll:()=>timers[0]()};
+  return {ids,requests,nodes,store,heading,submit,save,confirm,cancel,nav,next,bottomSave,outsideSave,lifecycle,returnButton,practiceButton,
+    cancelManaged:()=>messageHandler({type:'zhsChapterFlowCancelled'},{id:'test-extension'},()=>{}),poll:()=>timers[0]()};
 }
 test('chapter page reads closed question text and exposes API mode independently of local bank',async()=>{
   const h=await pageHarness();h.ids.inspect.onclick();assert.match(h.ids.status.textContent,/封闭题干示例/);assert.match(h.ids.status.textContent,/选项：2/);assert.match(h.ids.status.textContent,/可见验证码：无/);
@@ -90,4 +106,54 @@ test('a disabled visible Next still blocks submission until it disappears',async
   h.next.hidden=true;
   for(let i=0;i<3;i++){h.poll();await new Promise(setImmediate);}
   assert.equal(h.submit.clicks,1);assert.equal(h.confirm.clicks,1);assert.match(h.ids.status.textContent,/提交成功/);
+});
+
+test('managed tests automatically answer and report verified submission once',async()=>{
+  const h=await pageHarness({managed:true,api:true,highlight:true});assert.equal(h.requests.length,1);
+  for(let i=0;i<7;i++){h.poll();await new Promise(setImmediate);}
+  assert.equal(h.submit.clicks,1);assert.equal(h.confirm.clicks,1);assert.equal(h.lifecycle.length,1);assert.equal(h.lifecycle[0].id,'managed-flow');
+});
+
+test('unconfirmed submission and manual tests never request automatic closure',async()=>{
+  for(const options of [{managed:true,submitSuccess:false},{managed:false,autoChapter:true}]){
+    const h=await pageHarness({...options,api:true});
+    for(let i=0;i<5;i++){h.poll();await new Promise(setImmediate);}
+    assert.equal(h.confirm.clicks,1);assert.equal(h.lifecycle.length,0);
+  }
+});
+
+test('course cancellation stops a managed child without auto restart or completion',async()=>{
+  const h=await pageHarness({managed:true,api:true,autoChapter:true});h.cancelManaged();
+  for(let i=0;i<4;i++){h.poll();await new Promise(setImmediate);}
+  assert.equal(h.submit.clicks,0);assert.equal(h.lifecycle.length,0);assert.match(h.ids.status.textContent,/衔接已停止/);
+});
+
+test('actual full-mark feedback after confirmation completes the owned return once',async()=>{
+  const h=await pageHarness({managed:true,api:true,feedback:{}});
+  for(let i=0;i<7;i++){h.poll();await new Promise(setImmediate);}
+  assert.equal(h.submit.clicks,1);assert.equal(h.confirm.clicks,1);assert.equal(h.lifecycle.length,1);
+  assert.equal(h.returnButton.clicks,0);assert.equal(h.practiceButton.clicks,0);assert.match(h.ids.status.textContent,/正在返回课程/);
+});
+
+test('result feedback detection does not depend on full marks or completion percentage',async()=>{
+  const h=await pageHarness({managed:true,api:true,progress:80,feedback:{text:'本章测试成绩：80分'}});
+  for(let i=0;i<5;i++){h.poll();await new Promise(setImmediate);}
+  assert.equal(h.lifecycle.length,1);assert.equal(h.confirm.clicks,1);
+});
+
+test('hidden, unrelated and structurally incomplete feedback never triggers closure',async()=>{
+  for(const feedback of [{hidden:true},{wrongClass:true},{missingActions:true},{text:'请先完成本章练习'}]){
+    const h=await pageHarness({managed:true,api:true,feedback});
+    for(let i=0;i<5;i++){h.poll();await new Promise(setImmediate);}
+    assert.equal(h.lifecycle.length,0);assert.equal(h.confirm.clicks,1);
+  }
+});
+
+test('pre-existing feedback and manually opened result tabs never request closure',async()=>{
+  for(const options of [{managed:true,preexistingFeedback:true},{managed:false,autoChapter:true}]){
+    const h=await pageHarness({api:true,feedback:{},...options});
+    for(let i=0;i<5;i++){h.poll();await new Promise(setImmediate);}
+    assert.equal(h.lifecycle.length,0);
+    if(options.preexistingFeedback)assert.equal(h.submit.clicks,0);
+  }
 });

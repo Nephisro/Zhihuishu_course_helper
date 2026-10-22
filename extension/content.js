@@ -2,7 +2,7 @@
   'use strict';
   if (document.getElementById('zhs-course-helper')) return;
   const {validateBank, matchQuestion, catalogKind} = globalThis.ZhsCourseCore;
-  const defaults = {autoQuiz: true, autoNext: false, autoApi: false, autoChapter: false, bank: []};
+  const defaults = {autoQuiz: true, autoNext: false, autoApi: false, autoChapter: false, autoChapterFlow:false, bank: []};
   const END_WAIT_MS = 3000;
   let config = {...defaults}, running = false, busy = false, currentVideo = null, ready = false;
   let resumeAfterQuiz = false, switchAt = 0, observedQuiz = false;
@@ -11,6 +11,8 @@
   const apiResults = new WeakMap();
   const boundVideos = new WeakSet();
   let playedVideos = new WeakSet(), finishedVideos = new WeakSet(), runEpoch = 0;
+  let chapterPending=null;
+  const completedChapters=new Set();
   const host = document.createElement('div');
   host.id = 'zhs-course-helper';
   host.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483647';
@@ -23,10 +25,11 @@
     details{margin-top:8px}small{display:block;color:#b0c1d8}#status{white-space:pre-wrap;max-height:120px;overflow:auto}#body[hidden]{display:none}
   </style><section><h3>智慧树课程助手 <button id="fold" title="收起">−</button></h3><div id="body">
     <p id="status" role="status">未启动</p><button id="toggle">启动助手</button><button id="resume">恢复播放</button>
-    <label><input id="autoNext" type="checkbox"> 浏览器输入连播（跳过章节测试）</label>
+    <label><input id="autoNext" type="checkbox"> 浏览器输入连播</label>
     <label><input id="autoQuiz" type="checkbox"> 使用本地题库自动作答</label>
     <label><input id="autoApi" type="checkbox"> 新题调用 API（需先配置）</label><button id="apiSettings">API 设置</button><button id="retryApi">手动重试 API</button>
     <label><input id="autoChapter" type="checkbox"> 打开的章节测试页自动作答并提交</label>
+    <label><input id="autoChapterFlow" type="checkbox"> 连播时进入章节测试，完成后返回继续</label>
     <small>新题等待人工；不会自动关闭未知弹窗。</small>
     <details><summary>本地题库与诊断</summary><p>答案填写完整选项文字，不填 A/B。</p><textarea id="bank" spellcheck="false" aria-label="JSON题库"></textarea>
     <button id="save">保存题库</button><button id="capture">提取当前题目模板</button><button id="diagnose">查看状态</button><small>本地题库存于当前浏览器；API 按需另行启用。</small></details>
@@ -52,6 +55,7 @@
   }
   function stopSwitch(message) {
     running=false;runEpoch++;waitForSwitch=false;switchTarget=null;
+    void chrome.runtime.sendMessage({type:'zhsCancelNext'}).catch(()=>{});
     $('toggle').textContent='启动助手';status(message);
   }
   function observeVideo(v) {
@@ -149,10 +153,35 @@
     const entries = query('.chapter-item').map(catalogEntry);
     const selected = entries.filter(e=>e.item.classList.contains('current'));
     if (selected.length!==1 || selected[0].kind!=='video') { status('无法唯一确认当前视频课节，请人工选择目录'); return; }
+    if(config.autoChapterFlow){
+      const chapter=selected[0].item.closest?.('.el-collapse-item');
+      if(chapter){
+        const videos=entries.filter(e=>e.kind==='video'&&e.item.closest?.('.el-collapse-item')===chapter);
+        const tests=query('.test-box',chapter);
+        if(videos.at(-1)===selected[0]&&tests.length){
+          const title=chapter.querySelector('.chapter-title')?.textContent.trim()||'',name=chapter.querySelector('.chapter-name')?.textContent.trim()||'';
+          const key=JSON.stringify([title,name]);
+          if(!completedChapters.has(key)){
+            if(!title||!/第.{1,12}章/.test(title)||tests.length!==1||!/^(?:测试|章节测试|单元测试)$/.test(tests[0].textContent.trim())){stopSwitch('本章测试入口无法确认，请人工处理');return;}
+            const epoch=runEpoch;chapterPending={chapter:key,from:selected[0].key,sourceUrl:location.href,id:null};
+            status('正在打开本章测试，课程播放已暂停');
+            try{
+              const result=await chrome.runtime.sendMessage({type:'zhsOpenChapterTest',from:selected[0].key,chapter:key});
+              if(!running||runEpoch!==epoch)return;
+              if(!result?.ok||result.chapter!==key)throw new Error(result?.error||'章节测试后台未响应');
+              if(result.alreadyCompleted){completedChapters.add(key);chapterPending=null;status('本章测试已完成，准备继续课程');}
+              else if(typeof result.id==='string'){chapterPending.id=result.id;status('章节测试进行中，完成后继续课程');}
+              else throw new Error('未确认章节测试任务');
+            }catch(error){if(running&&runEpoch===epoch)stopSwitch(`章节测试衔接已停止：${error.message}`);}
+            return;
+          }
+        }
+      }
+    }
     const current = entries.indexOf(selected[0]);
     const remaining=entries.slice(current+1);
     const next=remaining.find(e=>e.kind==='video');
-    if (!next || !next.target) { status('后续目录中没有可识别的视频课节，章节测试不自动打开'); return; }
+    if (!next || !next.target) { status('课程目录已结束，没有后续视频课节'); return; }
     const target=next.target;
     if (entries.filter(e=>e.key===next.key).length!==1) { status('下一视频课节标识重复，请人工选择'); return; }
     if (target.matches('[disabled],[aria-disabled="true"]') || next.item.getAttribute('aria-disabled')==='true') { status('下一视频课节不可用，请人工确认目录'); return; }
@@ -172,7 +201,18 @@
   async function tick() {
     if (!running || busy || !ready) return;
     busy = true;
+    const epoch=runEpoch;
     try {
+      if(chapterPending){
+        if(!config.autoNext||!config.autoChapterFlow){stopSwitch('章节测试衔接已停止，请人工检查测试页');return;}
+        if(!chapterPending.id)return;
+        const result=await chrome.runtime.sendMessage({type:'zhsChapterFlowStatus',id:chapterPending.id});
+        if(!running||runEpoch!==epoch)return;
+        if(!result?.ok||result.phase==='failed'){stopSwitch(result?.error||'章节测试任务已失效，请人工核对');return;}
+        if(result.phase==='done'){
+          completedChapters.add(chapterPending.chapter);chapterPending=null;endedSince=Date.now();status('章节测试已完成，准备继续课程');
+        }else{status('章节测试进行中，完成后继续课程');return;}
+      }
       const v = video();
       observeVideo(v);
       const dialog = quiz();
@@ -204,7 +244,7 @@
       if (!v) status('未找到可见视频播放器');
       else if (v.ended) await nextLesson(v);
       else if (!v.paused) status('正在播放；监测随堂练习中');
-    } catch (error) { status(`助手已暂停：${error.message}`); running = false; $('toggle').textContent = '启动助手'; }
+    } catch (error) { stopSwitch(`助手已暂停：${error.message}`); }
     finally { busy = false; }
   }
   $('toggle').onclick = async () => {
@@ -212,15 +252,16 @@
     running = !running; runEpoch++; $('toggle').textContent = running ? '停止助手' : '启动助手';
     if(!running)void chrome.runtime.sendMessage({type:'zhsCancelNext'}).catch(()=>{});
     status(running ? '已启动' : '助手已停止，视频保持当前状态');
-    if (running) { waitForSwitch = false;switchTarget=null;currentVideo = null; endedSince=0; playedVideos=new WeakSet();finishedVideos=new WeakSet();await tick(); }
+    if (running) { chapterPending=null;waitForSwitch = false;switchTarget=null;currentVideo = null; endedSince=0; playedVideos=new WeakSet();finishedVideos=new WeakSet();await tick(); }
   };
   $('resume').onclick = async () => {
     if (quiz() || blockers().length) { status('请先完成并关闭页面弹窗'); return; }
     await playVideo(video());
   };
   $('fold').onclick = () => { $('body').hidden = !$('body').hidden; $('fold').textContent = $('body').hidden ? '+' : '−'; };
-  for (const id of ['autoNext','autoQuiz','autoApi','autoChapter']) $(id).onchange = async () => {
+  for (const id of ['autoNext','autoQuiz','autoApi','autoChapter','autoChapterFlow']) $(id).onchange = async () => {
     config[id] = $(id).checked;
+    if(chapterPending&&['autoNext','autoChapterFlow'].includes(id)&&!config[id])stopSwitch('章节测试衔接设置已关闭，保留测试页');
     try { await save(); status('设置已保存'); } catch (e) { status(`保存失败：${e.message}`); }
   };
   $('apiSettings').onclick = () => chrome.runtime.sendMessage({type:'zhsOpenApi'}).catch(e=>status(`无法打开设置：${e.message}`));
@@ -247,7 +288,7 @@
     try { config = {...defaults, ...data.zhsCourseHelper}; config.bank = validateBank(config.bank); }
     catch { config = {...defaults}; status('已重置无效题库'); }
     if (config.flowGuardVersion !== 2) { config.autoNext=false;config.flowGuardVersion=2;await save(); }
-    for (const id of ['autoNext','autoQuiz','autoApi','autoChapter']) $(id).checked = config[id];
+    for (const id of ['autoNext','autoQuiz','autoApi','autoChapter','autoChapterFlow']) $(id).checked = config[id];
     $('bank').value = JSON.stringify(config.bank, null, 2);
     ready = true;
   }).catch(e => status(`读取设置失败：${e.message}`));
@@ -255,5 +296,14 @@
   const observer = new MutationObserver(() => { if (Date.now() - lastScan > 350) { lastScan = Date.now(); void tick(); } });
   observer.observe(document.body, {subtree:true, childList:true, attributes:true, attributeFilter:['class','style']});
   const timer = setInterval(tick, 1200);
-  window.addEventListener('pagehide', () => { observer.disconnect(); clearInterval(timer); }, {once:true});
+  chrome.runtime.onMessage?.addListener((message,sender,reply)=>{
+    if(sender.id!==chrome.runtime.id||message?.type!=='zhsChapterFlowCanReturn')return false;
+    const selected=query('.chapter-item').filter(e=>e.classList.contains('current')).map(catalogEntry);
+    const ok=running&&config.autoNext&&config.autoChapterFlow&&!!chapterPending&&
+      message.chapter===chapterPending.chapter&&message.from===chapterPending.from&&
+      (!chapterPending.id||message.id===chapterPending.id)&&message.sourceUrl===location.href&&
+      selected.length===1&&selected[0].key===chapterPending.from&&video()?.ended;
+    reply({ok:!!ok});return false;
+  });
+  window.addEventListener('pagehide', () => { observer.disconnect(); clearInterval(timer);void chrome.runtime.sendMessage({type:'zhsCancelNext'}).catch(()=>{}); }, {once:true});
 })();

@@ -5,10 +5,10 @@ const vm=require('node:vm');
 const core=require('../extension/core.js');
 const url='https://wisdom-mooc.zhihuishu.com/study/index?recruitAndCourseId=test-course';
 const from=JSON.stringify(['3.1','第一节']),to=JSON.stringify(['3.2','第二节']);
-function harness({attachError=false,navigation=false,sameSource=false,pointError=false,plans=[]}={}) {
-  let handler,clock=100000,reads=0,detach=0,attach=0,planIndex=0;const commands=[],data={zhsSwitchLog:[]};
+function harness({attachError=false,navigation=false,sameSource=false,pointError=false,plans=[],opening=false,flowPhase='active'}={}) {
+  let handler,clock=100000,reads=0,detach=0,attach=0,planIndex=0;const commands=[],data={zhsSwitchLog:[]},flowCalls=[];
   const sender={id:'test-extension',url,tab:{id:1,url}};
-  const context={globalThis:null,URL,ZhsCourseCore:core,Date:class extends Date{constructor(...args){super(...(args.length?args:[clock]));}static now(){return clock;}},setTimeout:fn=>{clock+=1000;queueMicrotask(fn);},
+  const context={globalThis:null,URL,ZhsCourseCore:core,ZhsChapterFlow:{arm:async value=>{flowCalls.push(value);return {id:'flow-1'};},state:async()=>({phase:flowPhase,error:'未能确认测试页'}),cancel:async()=>{}},Date:class extends Date{constructor(...args){super(...(args.length?args:[clock]));}static now(){return clock;}},setTimeout:fn=>{clock+=1000;queueMicrotask(fn);},
     chrome:{runtime:{id:'test-extension',onMessage:{addListener:fn=>handler=fn}},storage:{local:{get:async()=>data,set:async value=>Object.assign(data,value)}},debugger:{
       attach:async()=>{attach++;if(attachError)throw Error('occupied');},detach:async()=>{detach++;},
       sendCommand:async(target,method,args)=>{
@@ -19,13 +19,15 @@ function harness({attachError=false,navigation=false,sameSource=false,pointError
             return {result:{value:{action:'lesson',x:100,y:200,url,src:'old-video',...plans[Math.min(planIndex++,plans.length-1)]}}};
           }
           reads++;
-          return {result:{value:reads===1?{url,current:from,video:{src:'old-video',ended:true,ready:4}}:{url:navigation?'https://onlineweb.zhihuishu.com/onlinestuh5':url,current:to,video:{src:sameSource?'old-video':'new-video',ended:false,ready:4,time:1}}}};
+          return {result:{value:reads===1?{url,current:from,video:{src:'old-video',ended:true,ready:4}}:{url:navigation?'https://onlineweb.zhihuishu.com/onlinestuh5':url,current:opening?from:to,video:{src:sameSource?'old-video':'new-video',ended:false,ready:4,time:1}}}};
         }
         return {};
       }
     }}};
   context.globalThis=context;vm.runInNewContext(fs.readFileSync(require.resolve('../extension/input-controller.js'),'utf8'),context);
-  return {data,commands,get detach(){return detach;},get attach(){return attach;},send:()=>new Promise(resolve=>handler({type:'zhsNextVideo',from,to},sender,resolve)),denied:()=>handler({type:'zhsNextVideo',from,to},{id:'other',url,tab:{id:1}},()=>{throw Error('unexpected reply');})};
+  return {data,commands,flowCalls,get detach(){return detach;},get attach(){return attach;},
+    sendChapter:()=>new Promise(resolve=>handler({type:'zhsOpenChapterTest',from,chapter:JSON.stringify(['第三章:','示例章节'])},sender,resolve)),
+    send:()=>new Promise(resolve=>handler({type:'zhsNextVideo',from,to},sender,resolve)),denied:()=>handler({type:'zhsNextVideo',from,to},{id:'other',url,tab:{id:1}},()=>{throw Error('unexpected reply');})};
 }
 test('browser input sends move/press/release and verifies new video source',async()=>{
   const h=harness(),r=await h.send();assert.equal(r.ok,true);assert.equal(r.target,to);assert.equal(h.attach,1);assert.equal(h.detach,1);
@@ -48,6 +50,30 @@ test('obscured or invalid next lesson is rejected before sending input',async()=
   const h=harness({pointError:true}),r=await h.send();assert.equal(r.ok,false);assert.equal(h.commands.filter(c=>c.method==='Input.dispatchMouseEvent').length,0);assert.equal(h.detach,1);
 });
 test('other extensions cannot request browser-level course clicks',()=>{const h=harness();assert.equal(h.denied(),false);assert.equal(h.attach,0);});
+
+test('chapter entry uses one browser click and waits for the owned tab handshake',async()=>{
+  const h=harness({opening:true}),result=await h.sendChapter();assert.equal(result.ok,true);assert.equal(result.id,'flow-1');assert.equal(h.flowCalls.length,1);
+  assert.equal(h.flowCalls[0].sourceTabId,1);assert.equal(h.commands.filter(c=>c.method==='Input.dispatchMouseEvent'&&c.args.type==='mousePressed').length,1);assert.equal(h.detach,1);
+});
+
+test('an unconfirmed or failed test tab never causes another click',async()=>{
+  for(const flowPhase of ['opening','failed']){
+    const h=harness({opening:true,flowPhase}),result=await h.sendChapter();assert.equal(result.ok,false);
+    assert.equal(h.commands.filter(c=>c.method==='Input.dispatchMouseEvent'&&c.args.type==='mousePressed').length,1);assert.equal(h.detach,1);
+  }
+});
+
+test('real chapter test-box is targeted only for its own final video',async()=>{
+  const h=harness({opening:true});await h.sendChapter();
+  const expression=h.commands.find(c=>c.method==='Runtime.evaluate'&&c.args.expression.includes('const classify=')).args.expression;
+  const chapter={querySelector:s=>s==='.chapter-title'?{textContent:'第三章:'}:s==='.chapter-name'?{textContent:'示例章节'}:null,querySelectorAll:s=>s==='.test-box'?[testBox]:[]};
+  const testBox={textContent:'测试',getClientRects:()=>[{}],matches:()=>false,getAttribute:()=>null,closest:s=>s==='.el-collapse-item'?chapter:null,getBoundingClientRect:()=>({left:20,right:200,top:200,bottom:240}),contains:e=>e===testBox};
+  const item=(number,title,current)=>({className:'chapter-item',classList:{contains:c=>c==='current'&&current},getAttribute:()=>null,closest:s=>s==='.el-collapse-item'?chapter:null,querySelector:s=>s==='.item-num'?{textContent:number}:s==='.item-name'?{textContent:title}:testBox});
+  const entries=[item('3.1','第一节',true)];
+  const page={location:{href:url},innerWidth:800,innerHeight:600,getComputedStyle:()=>({visibility:'visible'}),document:{querySelectorAll:s=>s==='.chapter-item'?entries:s==='video'?[{getClientRects:()=>[{}],ended:true,currentSrc:'old-video'}]:[],elementFromPoint:()=>testBox}};
+  assert.equal(vm.runInNewContext(expression,page).x,110);
+  entries.push(item('3.2','第二节',false));assert.throws(()=>vm.runInNewContext(expression,page),/本章末节/);
+});
 test('generated DOM validation expression finds only the actual next video and rejects overlays',async()=>{
   const h=harness();await h.send();const expression=h.commands.find(c=>c.method==='Runtime.evaluate'&&c.args.expression.includes('const classify=')).args.expression;
   const target={getClientRects:()=>[{}],matches:()=>false,getBoundingClientRect:()=>({x:50,y:150,width:100,height:100}),contains:e=>e===target};

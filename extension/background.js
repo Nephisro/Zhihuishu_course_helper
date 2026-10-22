@@ -1,6 +1,8 @@
 'use strict';
 importScripts('core.js');
 importScripts('api-config.js');
+importScripts('chapter-engine.js');
+importScripts('chapter-flow.js');
 importScripts('input-controller.js');
 let inFlight = false;
 function validSender(sender) {

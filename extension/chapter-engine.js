@@ -12,7 +12,7 @@
 
   function createRunner({page,solve,status=()=>{},now=Date.now}) {
     let running=false,busy=false,epoch=0,config={},phase='answer',exam=null,expected=1;
-    let plan=null,mark='',deadline=0,retryAt=0,beforeNotice='',confirmed=false,saveConfirmed=false,completed=false;
+    let plan=null,mark='',deadline=0,retryAt=0,beforeNotice='',confirmed=false,saveConfirmed=false,completed=false,outcome=null;
     const saved=new Set();
     function stop(message) { running=false;epoch++;status(message); }
     function start(settings) {
@@ -26,9 +26,9 @@
       try {
         const s=page.read();
         if(s.captcha){status('请手动完成安全验证，完成后助手继续；不自动处理验证码');return;}
-        if(phase==='submit'&&s.submitted){completed=true;stop('章节测试已提交成功，请核对平台成绩');return;}
-        if(!isChapter(s.title)){stop('当前不是可识别的章节测试，请人工处理');return;}
         if(exam&&s.examKey!==exam.key){stop('测试页面已变化，已停止');return;}
+        if(phase==='submit'&&(s.submitted||(confirmed&&s.resultFeedback))){completed=true;outcome='submitted';stop('章节测试已提交成功，请核对平台成绩');return;}
+        if(!isChapter(s.title)){stop('当前不是可识别的章节测试，请人工处理');return;}
         if(s.dialog){
           if(phase==='save'&&!saveConfirmed&&savingPrompt(s.dialog.text)&&s.dialog.confirmable&&s.atLastQuestion===true&&s.question&&fingerprint(s.question)===mark&&sameIndices(s.question.selected,plan)){
             saveConfirmed=true;page.confirm('save');deadline=now()+15000;status('已确认暂存，等待平台保存结果');return;
@@ -61,7 +61,7 @@
           if(s.savedNotice&&s.savedNotice!==beforeNotice&&s.atLastQuestion===true){
             saved.add(expected);
             if(saved.size!==exam.total){stop('尚未确认全部题目保存，取消交卷');return;}
-            if(!config.autoSubmit){completed=true;stop('所有题目已暂存，请人工提交作业');return;}
+            if(!config.autoSubmit){completed=true;outcome='saved';stop('所有题目已暂存，请人工提交作业');return;}
             phase='submit';deadline=now()+15000;page.submit();status('所有题目已保存，已请求提交作业');return;
           }
           if(now()>=deadline)stop('暂存结果未得到确认，请人工核对');
@@ -112,7 +112,7 @@
       } catch(error){if(active())stop(`章节测试已停止：${error.message}`);}
       finally{busy=false;}
     }
-    return {start,stop,tick,get running(){return running;},get completed(){return completed;}};
+    return {start,stop,tick,get running(){return running;},get completed(){return completed;},get outcome(){return outcome;}};
   }
   const api={createRunner,isChapter,submissionPrompt,savingPrompt};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.ZhsChapterEngine=api;

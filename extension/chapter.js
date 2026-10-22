@@ -13,7 +13,7 @@
   document.documentElement.append(own);
   for(const name of ['click','dblclick','pointerdown','pointerup','keydown','keyup'])own.addEventListener(name,event=>event.stopPropagation());
   const $=id=>ui.getElementById(id);
-  let config=null,ready=false,autoStarted=false;
+  let config=null,ready=false,autoStarted=false,managedId=null,flowChecked=false,flowChecking=false,completionSent=false,userEpoch=0;
   const syncSettings=()=>{for(const id of ['autoQuiz','autoApi'])$(id).checked=!!config[id];};
   const status=text=>{$('status').textContent=text;$('toggle').textContent=runner.running?'停止章节助手':'启动 / 继续章节助手';};
   function button(text,scope=document){
@@ -50,12 +50,19 @@
     const saved=messages.find(e=>/(?:暂存|保存).*成功|成功.*(?:暂存|保存)/.test(e.innerText));
     const dialogs=query('.el-dialog,.el-message-box').filter(shown);
     const dialog=dialogs[0];
+    const feedback=query('.el-dialog.dialog-has-ai-training-btn').filter(shown);
+    const result=feedback.length===1&&dialogs.length===1&&feedback[0]===dialog?feedback[0]:null;
+    const actions=result?query('.btns button',result).filter(enabled):[];
+    const resultFeedback=!!result&&/本章测试/.test(result.querySelector('.userinfo .desc')?.innerText||'')&&
+      actions.filter(e=>e.textContent.trim()==='返回作业考试').length===1&&
+      actions.filter(e=>e.textContent.trim()==='练一练').length===1;
     const confirmations=dialog?query('button',dialog).filter(e=>enabled(e)&&/^(确定|确认|确认提交|确定提交|提交作业)$/.test(e.textContent.trim())):[];
     return {
       examKey:location.origin+location.pathname+location.hash,title,total:validCards?total:NaN,
       atLastQuestion:navigation()?.atLastQuestion===true,
       savedNotice:saved?`${saved.id}:${saved.innerText.trim()}`:'',
       submitted:messages.some(e=>/(?:提交|交卷)成功|作业已提交/.test(e.innerText))||dialogs.some(e=>/(?:提交|交卷)成功/.test(e.innerText)),
+      resultFeedback,
       captcha:query('iframe').some(e=>/captcha/i.test(e.id+' '+e.getAttribute('src'))&&visibleOverlay(e)),
       dialog:dialog?{text:dialog.innerText,confirmable:dialogs.length===1&&confirmations.length===1}:null,
       question:subject?{
@@ -88,14 +95,41 @@
     },
   };
   const runner=globalThis.ZhsChapterEngine.createRunner({page,status,solve:questions=>chrome.runtime.sendMessage({type:'zhsChapterSolve',questions})});
-  function maybeAutoStart(){
+  async function maybeAutoStart(){
+    if(!ready||!globalThis.ZhsChapterEngine.isChapter(document.querySelector('h1')?.innerText.trim()||''))return;
+    if(!flowChecked){
+      if(flowChecking)return;
+      flowChecking=true;
+      const intent=userEpoch;
+      try{
+        const result=await chrome.runtime.sendMessage({type:'zhsChapterFlowClaim',title:document.querySelector('h1')?.innerText.trim()||''});
+        if(!result?.ok)throw new Error(result?.error||'章节测试衔接后台未响应');
+        flowChecked=true;
+        if(intent!==userEpoch)return;
+        if(result.managed&&typeof result.id==='string'){
+          managedId=result.id;autoStarted=true;$('autoSubmit').checked=true;
+          runner.start({...config,autoSubmit:true});
+        }
+      }catch(error){flowChecked=true;autoStarted=true;status(`章节测试衔接未启动：${error.message}`);}
+      finally{flowChecking=false;}
+    }
     if(ready&&config.autoChapter&&!autoStarted&&globalThis.ZhsChapterEngine.isChapter(document.querySelector('h1')?.innerText.trim()||'')){
       autoStarted=true;runner.start({...config,autoSubmit:$('autoSubmit').checked});
     }
   }
+  async function poll(){
+    await maybeAutoStart();await runner.tick();
+    if(managedId&&runner.outcome==='submitted'&&!completionSent){
+      completionSent=true;status('章节测试已提交，正在返回课程');
+      try{
+        const result=await chrome.runtime.sendMessage({type:'zhsChapterFlowComplete',id:managedId});
+        if(!result?.ok)throw new Error(result?.error||'自动返回未得到确认');
+      }catch(error){status(`测试已提交，自动返回未完成：${error.message}`);}
+    }
+  }
   $('toggle').onclick=()=>{
     if(!ready){status('正在读取设置，请稍候');return;}
-    autoStarted=true;
+    userEpoch++;autoStarted=true;
     if(runner.running)runner.stop('章节测试助手已停止，保留已有答案');
     else {runner.start({...config,autoSubmit:$('autoSubmit').checked});void runner.tick();}
   };
@@ -109,17 +143,21 @@
     runner.stop('答题来源已更改，请点击继续');config[id]=$(id).checked;
     try{await chrome.storage.local.set({zhsCourseHelper:config});}catch(e){status(`保存设置失败：${e.message}`);}
   };
+  chrome.runtime.onMessage?.addListener((message,sender,reply)=>{
+    if(sender.id!==chrome.runtime.id||message?.type!=='zhsChapterFlowCancelled')return false;
+    userEpoch++;managedId=null;autoStarted=true;flowChecked=true;runner.stop('课程衔接已停止，保留当前测试页');reply({ok:true});return false;
+  });
   chrome.storage.local.get('zhsCourseHelper').then(data=>{
     config={autoQuiz:true,autoApi:false,autoChapter:false,bank:[],...data.zhsCourseHelper};
     config.bank=globalThis.ZhsCourseCore.validateBank(config.bank);ready=true;syncSettings();
     status('就绪：可从第 1 题开始自动作答并提交');
-    maybeAutoStart();void runner.tick();
+    void poll();
   }).catch(e=>status(`读取设置失败：${e.message}`));
   chrome.storage.onChanged?.addListener((changes,area)=>{
     if(area!=='local'||!changes.zhsCourseHelper)return;
     runner.stop('题库或答题设置已变化，请点击继续');
     try{config={...config,...changes.zhsCourseHelper.newValue};config.bank=globalThis.ZhsCourseCore.validateBank(config.bank);syncSettings();}catch(e){ready=false;status(e.message);}
   });
-  const timer=setInterval(()=>{maybeAutoStart();void runner.tick();},1000);
+  const timer=setInterval(()=>{void poll();},1000);
   window.addEventListener('pagehide',()=>{clearInterval(timer);runner.stop('页面已关闭，章节助手停止');},{once:true});
 })();

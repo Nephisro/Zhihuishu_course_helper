@@ -15,7 +15,7 @@ class Element {
   addEventListener(name,fn) { (this.events??={})[name]??=[];this.events[name].push(fn); }
   emit(name) {for(const fn of this.events?.[name]||[])fn();}
 }
-async function harness({bank=[],api=false,result,autoQuiz=true,autoNext=false,sendMessage}={}) {
+async function harness({bank=[],api=false,result,autoQuiz=true,autoNext=false,autoChapterFlow=false,sendMessage}={}) {
   const ids={}, timers=[], timeouts=[]; let now=100000;
   const doc=new Element(), root=new Element(), body=new Element();
   doc.documentElement=root;doc.body=body;doc.getElementById=()=>null;
@@ -34,10 +34,10 @@ async function harness({bank=[],api=false,result,autoQuiz=true,autoNext=false,se
   dialog.map['.ques-list .item']=[question];
   const submit=new Element('提交作答');dialog.map['button']=[submit];dialog.map['.el-dialog__footer button']=[submit];
   doc.map['video']=[v];doc.map['.ai-class-exercise-dialog']=[dialog];doc.map['.el-dialog,[role="dialog"],.vjs-modal-dialog']=[dialog];doc.map['.chapter-item']=[];
-  let calls=0;
-  const context={globalThis:null,document:doc,window:{addEventListener(){}},getComputedStyle:()=>({visibility:'visible',display:'block'}),MutationObserver:class{observe(){}disconnect(){}},
+  let calls=0,messageHandler;
+  const context={globalThis:null,document:doc,location:{href:'https://wisdom-mooc.zhihuishu.com/study/index?recruitAndCourseId=test-course'},window:{addEventListener(){}},getComputedStyle:()=>({visibility:'visible',display:'block'}),MutationObserver:class{observe(){}disconnect(){}},
     setInterval:fn=>{timers.push(fn);return 1;},clearInterval(){},setTimeout:fn=>{timeouts.push(fn);return 1;},Date:class extends Date{static now(){return now;}},
-    chrome:{storage:{local:{get:async()=>({zhsCourseHelper:{bank,autoApi:api,autoQuiz,autoNext,flowGuardVersion:2}}),set:async()=>{}}},runtime:{sendMessage:async(message)=>{
+    chrome:{storage:{local:{get:async()=>({zhsCourseHelper:{bank,autoApi:api,autoQuiz,autoNext,autoChapterFlow,flowGuardVersion:2}}),set:async()=>{}}},runtime:{id:'test-extension',onMessage:{addListener:fn=>messageHandler=fn},sendMessage:async(message)=>{
       calls++;if(sendMessage)return sendMessage(message);
       if(message.type==='zhsNextVideo'){
         const item=(doc.map['.chapter-item']||[]).find(e=>JSON.stringify([e.querySelector('.item-num')?.textContent||'',e.querySelector('.item-name')?.textContent||''])===message.to);
@@ -48,7 +48,8 @@ async function harness({bank=[],api=false,result,autoQuiz=true,autoNext=false,se
     }}},ZhsCourseCore:core};
   context.globalThis=context;vm.runInNewContext(fs.readFileSync(require.resolve('../extension/content.js'),'utf8'),context);
   await Promise.resolve();await Promise.resolve();
-  return {ids,v,dialog,submit,options,doc,get calls(){return calls;},start:()=>ids.toggle.onclick(),tick:()=>timers[0](),advance:ms=>now+=ms,flush:()=>{while(timeouts.length)timeouts.shift()();}};
+  return {ids,v,dialog,submit,options,doc,get calls(){return calls;},start:()=>ids.toggle.onclick(),tick:()=>timers[0](),advance:ms=>now+=ms,flush:()=>{while(timeouts.length)timeouts.shift()();},
+    receive:message=>new Promise(resolve=>messageHandler(message,{id:'test-extension'},resolve))};
 }
 test('unknown quiz pauses video and never selects or submits', async()=>{
   const h=await harness();await h.start();await h.tick();h.flush();

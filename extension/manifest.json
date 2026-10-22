@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
   "name": "智慧树课程助手",
-  "version": "1.5.5",
+  "version": "1.6.1",
   "description": "课程连播、章节测试与随堂练习辅助、本地题库及可选 API。",
-  "permissions": ["storage", "debugger"],
+  "permissions": ["storage", "debugger", "webNavigation"],
+  "host_permissions": ["https://wisdom-mooc.zhihuishu.com/*", "https://onlineexamh5new.zhihuishu.com/*"],
   "optional_host_permissions": ["https://*/*"],
   "background": {"service_worker": "background.js"},
   "options_page": "options.html",

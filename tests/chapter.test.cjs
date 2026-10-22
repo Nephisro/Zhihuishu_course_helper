@@ -41,10 +41,12 @@ test('chapter title guard accepts chapter tests and excludes final exams',()=>{
 test('single, multiple and boolean questions are saved in order before one submission',async()=>{
   const h=fixture();await h.finish();assert.deepEqual(h.qs.map(q=>q.selected),[[1],[2,0],[0]]);
   assert.deepEqual(h.calls,{select:3,next:2,save:0,submit:1,confirm:1,api:0});assert.equal(h.runner.completed,true);assert.match(h.last,/提交成功/);
+  assert.equal(h.runner.outcome,'submitted');
   h.runner.start(h.config);await h.finish();assert.equal(h.calls.submit,1);
 });
 test('all questions can be saved with final submission disabled',async()=>{
   const h=fixture({autoSubmit:false});await h.finish();assert.equal(h.calls.save,1);assert.equal(h.calls.submit,0);assert.match(h.last,/人工提交/);
+  assert.equal(h.runner.outcome,'saved');
 });
 test('missing local answer stops without guessing or flipping any options',async()=>{
   const h=fixture({bank:[]});await h.finish();assert.equal(h.calls.select,0);assert.equal(h.calls.next,0);assert.equal(h.calls.submit,0);
@@ -135,6 +137,16 @@ test('an incomplete-answer confirmation is never automatically accepted',async()
 });
 test('unconfirmed submission times out without repeated submit clicks',async()=>{
   const h=fixture();h.page.submit=()=>h.calls.submit++;await h.finish();h.advance(16000);await h.tick();assert.equal(h.calls.submit,1);assert.equal(h.runner.completed,false);assert.equal(h.runner.running,false);
+});
+
+test('grade feedback cannot complete submission before our confirmation',async()=>{
+  const h=fixture();h.page.submit=()=>{h.calls.submit++;h.state.resultFeedback=true;h.state.dialog={text:'恭喜你本章测试取得满分！',confirmable:false};};
+  await h.finish();assert.equal(h.calls.submit,1);assert.equal(h.calls.confirm,0);assert.equal(h.runner.outcome,null);assert.equal(h.runner.completed,false);
+});
+
+test('a success result from a different exam is rejected after confirmation',async()=>{
+  const h=fixture();h.page.confirm=()=>{h.calls.confirm++;h.state.dialog=null;h.state.resultFeedback=true;h.state.submitted=true;h.state.examKey='different-exam';};
+  await h.finish();assert.equal(h.calls.confirm,1);assert.equal(h.runner.completed,false);assert.equal(h.runner.outcome,null);assert.match(h.last,/页面已变化/);
 });
 test('invalid initial question number, changed exam and empty stem do not cause answers',async()=>{
   const h=fixture();h.index=1;await h.tick();assert.equal(h.calls.select,0);assert.equal(h.runner.running,false);
