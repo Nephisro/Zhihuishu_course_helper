@@ -2,7 +2,8 @@
   'use strict';
   if (document.getElementById('zhs-course-helper')) return;
   const {validateBank, matchQuestion, catalogKind} = globalThis.ZhsCourseCore;
-  const defaults = {autoQuiz: true, autoNext: false, autoApi: false, autoChapter: false, autoChapterFlow:false, bank: []};
+  const PLAYBACK_RATES=[1,1.25,1.5];
+  const defaults = {autoQuiz: true, autoNext: false, autoApi: false, autoChapter: false, autoChapterFlow:false, autoSpeed:false, playbackRate:1.5, bank: []};
   const END_WAIT_MS = 3000;
   let config = {...defaults}, running = false, busy = false, currentVideo = null, ready = false;
   let resumeAfterQuiz = false, switchAt = 0, observedQuiz = false;
@@ -12,6 +13,8 @@
   const boundVideos = new WeakSet();
   let playedVideos = new WeakSet(), finishedVideos = new WeakSet(), runEpoch = 0;
   let chapterPending=null;
+  let observer=null,timer=null;
+  let speedAttempts=new WeakMap();
   const completedChapters=new Set();
   const host = document.createElement('div');
   host.id = 'zhs-course-helper';
@@ -26,6 +29,7 @@
   </style><section><h3>智慧树课程助手 <button id="fold" title="收起">−</button></h3><div id="body">
     <p id="status" role="status">未启动</p><button id="toggle">启动助手</button><button id="resume">恢复播放</button>
     <label><input id="autoNext" type="checkbox"> 浏览器输入连播</label>
+    <label><input id="autoSpeed" type="checkbox"> 自动设置倍速 <select id="playbackRate" aria-label="播放倍速"><option value="1">1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option></select></label>
     <label><input id="autoQuiz" type="checkbox"> 使用本地题库自动作答</label>
     <label><input id="autoApi" type="checkbox"> 新题调用 API（需先配置）</label><button id="apiSettings">API 设置</button><button id="retryApi">手动重试 API</button>
     <label><input id="autoChapter" type="checkbox"> 打开的章节测试页自动作答并提交</label>
@@ -39,7 +43,13 @@
   for (const name of ['click','dblclick','pointerdown','pointerup','keydown','keyup']) host.addEventListener(name,event=>event.stopPropagation());
   for (const button of ui.querySelectorAll('button')) button.type = 'button';
   const $ = id => ui.getElementById(id);
-  const status = text => { if ($('status').textContent !== text) $('status').textContent = text; };
+  const status = text => {if(bridge.invalidated)text=globalThis.ZhsPageRuntime.refreshMessage; if ($('status').textContent !== text) $('status').textContent = text; };
+  const bridge=globalThis.ZhsPageRuntime.create({onInvalidated(){
+    running=false;ready=false;runEpoch++;waitForSwitch=false;switchTarget=null;chapterPending=null;
+    observer?.disconnect();if(timer!==null)clearInterval(timer);
+    $('toggle').textContent='刷新页面后继续';$('toggle').disabled=true;
+    status(globalThis.ZhsPageRuntime.refreshMessage);
+  }});
   const visible = element => !!element && element.getClientRects().length > 0 &&
     getComputedStyle(element).visibility !== 'hidden' && getComputedStyle(element).display !== 'none';
   const query = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -54,8 +64,9 @@
     return {item,number,title,target,key:JSON.stringify([number,title]),kind:catalogKind({number,title,kind})};
   }
   function stopSwitch(message) {
+    if(bridge.invalidated)return;
     running=false;runEpoch++;waitForSwitch=false;switchTarget=null;
-    void chrome.runtime.sendMessage({type:'zhsCancelNext'}).catch(()=>{});
+    void bridge.send({type:'zhsCancelNext'}).catch(()=>{});
     $('toggle').textContent='启动助手';status(message);
   }
   function observeVideo(v) {
@@ -64,7 +75,7 @@
       boundVideos.add(v);
       v.addEventListener('playing',()=>{if(running){playedVideos.add(v);finishedVideos.delete(v);}});
       v.addEventListener('ended',()=>{if(running && currentVideo===v && playedVideos.has(v)){finishedVideos.add(v);endedSince=Date.now();}});
-      v.addEventListener('loadstart',()=>{playedVideos.delete(v);finishedVideos.delete(v);if(currentVideo===v)endedSince=0;});
+      v.addEventListener('loadstart',()=>{playedVideos.delete(v);finishedVideos.delete(v);speedAttempts.delete(v);if(currentVideo===v)endedSince=0;});
     }
     if (!v.paused && !v.ended) playedVideos.add(v);
   }
@@ -80,7 +91,24 @@
     return [element, ...query('*', element)].some(e => e.matches('[aria-checked="true"],input:checked') ||
       [...e.classList].some(c => /^(active|selected|checked|is-checked|is-selected|option-selected|class-question-selected)$/.test(c)));
   }
-  async function save() { await chrome.storage.local.set({zhsCourseHelper: config}); }
+  async function save() { await bridge.setLocal({zhsCourseHelper: config}); }
+  function applyPlaybackSpeed(v){
+    if(!config.autoSpeed||!v||v.ended||v.readyState<1)return '';
+    const rate=config.playbackRate;
+    if(!PLAYBACK_RATES.includes(rate))return '倍速设置无效，请重新选择';
+    if(Math.abs(v.playbackRate-rate)<0.01)return `倍速：${rate}×`;
+    const menus=query('.speedBox').filter(visible);
+    if(menus.length!==1)return '未找到唯一的播放器倍速菜单，请手动设置';
+    const choices=query('.speedTab',menus[0]).filter(e=>Number(e.getAttribute('rate'))===rate&&!e.matches('[disabled],[aria-disabled="true"]'));
+    if(choices.length!==1)return '播放器未提供所选倍速，请手动设置';
+    let attempt=speedAttempts.get(v);
+    if(!attempt||attempt.src!==v.currentSrc||attempt.rate!==rate){attempt={src:v.currentSrc,rate,count:0,nextAt:0};speedAttempts.set(v,attempt);}
+    if(attempt.count>=2)return '播放器未确认倍速，请手动设置';
+    if(Date.now()<attempt.nextAt)return '等待播放器确认倍速';
+    attempt.count++;attempt.nextAt=Date.now()+2000;
+    try{choices[0].click();}catch{return '播放器未接受倍速设置，请手动设置';}
+    return Math.abs(v.playbackRate-rate)<0.01?`倍速：${rate}×`:'等待播放器确认倍速';
+  }
   async function playVideo(v) {
     if (!v || v.ended || !v.paused) return;
     try { await v.play(); status('正在播放'); }
@@ -116,7 +144,7 @@
         status('正在请求 API 答题，最多等待 25 秒');
         try {
           const missingQuestions = plans.filter(p=>!p.match.ok).map(({q})=>({question:q.question,multiple:q.multiple,options:q.options.map(o=>o.text)}));
-          const result = await chrome.runtime.sendMessage({type:'zhsSolve',questions:missingQuestions});
+          const result = await bridge.send({type:'zhsSolve',questions:missingQuestions});
           if (!result?.ok) throw new Error(result?.error || 'API 后台未响应');
           cached.bank = validateBank(result.bank);
         } catch (error) { cached.error = error.message; }
@@ -166,7 +194,7 @@
             const epoch=runEpoch;chapterPending={chapter:key,from:selected[0].key,sourceUrl:location.href,id:null};
             status('正在打开本章测试，课程播放已暂停');
             try{
-              const result=await chrome.runtime.sendMessage({type:'zhsOpenChapterTest',from:selected[0].key,chapter:key});
+              const result=await bridge.send({type:'zhsOpenChapterTest',from:selected[0].key,chapter:key});
               if(!running||runEpoch!==epoch)return;
               if(!result?.ok||result.chapter!==key)throw new Error(result?.error||'章节测试后台未响应');
               if(result.alreadyCompleted){completedChapters.add(key);chapterPending=null;status('本章测试已完成，准备继续课程');}
@@ -191,7 +219,7 @@
     switchedFrom = selected[0].item; switchTarget=next; waitForSwitch = true; switchAt = Date.now();
     status(`浏览器输入切课：${next.number} ${next.title}${skipped?`；跳过 ${skipped} 个测试条目`:''}；自动展开/滚动目录并核对新视频源`);
     try {
-      const result=await chrome.runtime.sendMessage({type:'zhsNextVideo',from:selected[0].key,to:next.key});
+      const result=await bridge.send({type:'zhsNextVideo',from:selected[0].key,to:next.key});
       if(!running||runEpoch!==epoch)return;
       if(!result?.ok)throw new Error(result?.error||'浏览器输入后台无响应');
       if(result.target!==next.key)throw new Error('浏览器输入返回的课节不一致');
@@ -199,14 +227,14 @@
     } catch(error) {if(running&&runEpoch===epoch)stopSwitch(`切课已停止：${error.message}`);}
   }
   async function tick() {
-    if (!running || busy || !ready) return;
+    if (!bridge.valid()||!running || busy || !ready) return;
     busy = true;
     const epoch=runEpoch;
     try {
       if(chapterPending){
         if(!config.autoNext||!config.autoChapterFlow){stopSwitch('章节测试衔接已停止，请人工检查测试页');return;}
         if(!chapterPending.id)return;
-        const result=await chrome.runtime.sendMessage({type:'zhsChapterFlowStatus',id:chapterPending.id});
+        const result=await bridge.send({type:'zhsChapterFlowStatus',id:chapterPending.id});
         if(!running||runEpoch!==epoch)return;
         if(!result?.ok||result.phase==='failed'){stopSwitch(result?.error||'章节测试任务已失效，请人工核对');return;}
         if(result.phase==='done'){
@@ -238,33 +266,45 @@
           status('等待已点击的视频课节加载，不重复切课');return;
         }
       }
+      const speedNote=applyPlaybackSpeed(v);
       if (v && currentVideo !== v) { currentVideo = v; if (!waitForSwitch) await playVideo(v); }
       if (v && !waitForSwitch && !v.ended && Date.now() - switchAt < 6000 && switchAt) await playVideo(v);
       if (v?.ended) { if (!endedSince) endedSince = Date.now(); } else endedSince = 0;
       if (!v) status('未找到可见视频播放器');
       else if (v.ended) await nextLesson(v);
-      else if (!v.paused) status('正在播放；监测随堂练习中');
+      else if (!v.paused) status(`正在播放；监测随堂练习中${speedNote?'\n'+speedNote:''}`);
     } catch (error) { stopSwitch(`助手已暂停：${error.message}`); }
     finally { busy = false; }
   }
   $('toggle').onclick = async () => {
+    if(!bridge.valid())return;
     if (!ready) { status('正在读取设置，请稍候'); return; }
     running = !running; runEpoch++; $('toggle').textContent = running ? '停止助手' : '启动助手';
-    if(!running)void chrome.runtime.sendMessage({type:'zhsCancelNext'}).catch(()=>{});
+    if(!running)void bridge.send({type:'zhsCancelNext'}).catch(()=>{});
     status(running ? '已启动' : '助手已停止，视频保持当前状态');
     if (running) { chapterPending=null;waitForSwitch = false;switchTarget=null;currentVideo = null; endedSince=0; playedVideos=new WeakSet();finishedVideos=new WeakSet();await tick(); }
   };
   $('resume').onclick = async () => {
+    if(!bridge.valid())return;
     if (quiz() || blockers().length) { status('请先完成并关闭页面弹窗'); return; }
     await playVideo(video());
   };
   $('fold').onclick = () => { $('body').hidden = !$('body').hidden; $('fold').textContent = $('body').hidden ? '+' : '−'; };
-  for (const id of ['autoNext','autoQuiz','autoApi','autoChapter','autoChapterFlow']) $(id).onchange = async () => {
+  for (const id of ['autoNext','autoQuiz','autoApi','autoChapter','autoChapterFlow','autoSpeed']) $(id).onchange = async () => {
+    if(!bridge.valid())return;
     config[id] = $(id).checked;
+    if(id==='autoSpeed')speedAttempts=new WeakMap();
     if(chapterPending&&['autoNext','autoChapterFlow'].includes(id)&&!config[id])stopSwitch('章节测试衔接设置已关闭，保留测试页');
-    try { await save(); status('设置已保存'); } catch (e) { status(`保存失败：${e.message}`); }
+    try { await save(); status('设置已保存');if(id==='autoSpeed'&&running)await tick(); } catch (e) { status(`保存失败：${e.message}`); }
   };
-  $('apiSettings').onclick = () => chrome.runtime.sendMessage({type:'zhsOpenApi'}).catch(e=>status(`无法打开设置：${e.message}`));
+  $('playbackRate').onchange=async()=>{
+    if(!bridge.valid())return;
+    const rate=Number($('playbackRate').value);
+    if(!PLAYBACK_RATES.includes(rate)){status('请选择播放器支持的倍速');return;}
+    config.playbackRate=rate;speedAttempts=new WeakMap();
+    try{await save();status('倍速偏好已保存');if(running)await tick();}catch(error){status(`保存失败：${error.message}`);}
+  };
+  $('apiSettings').onclick = () => bridge.send({type:'zhsOpenApi'}).catch(e=>status(`无法打开设置：${e.message}`));
   $('retryApi').onclick = () => {
     const dialog = quiz();
     if (!dialog || busy) { status('请等待当前请求完成，并确认题目弹窗仍在'); return; }
@@ -284,19 +324,24 @@
     status('当前题目模板已放入编辑框；填写 answers 后保存。注意：保存会替换原题库');
   };
   $('diagnose').onclick = () => status(JSON.stringify({running, video:!!video(), paused:video()?.paused, quiz:!!quiz(), dialogs:blockers().length, bank:config.bank.length},null,2));
-  chrome.storage.local.get('zhsCourseHelper').then(async data => {
+  bridge.getLocal('zhsCourseHelper').then(async data => {
+    if(!bridge.valid())return;
     try { config = {...defaults, ...data.zhsCourseHelper}; config.bank = validateBank(config.bank); }
     catch { config = {...defaults}; status('已重置无效题库'); }
     if (config.flowGuardVersion !== 2) { config.autoNext=false;config.flowGuardVersion=2;await save(); }
-    for (const id of ['autoNext','autoQuiz','autoApi','autoChapter','autoChapterFlow']) $(id).checked = config[id];
+    if(!PLAYBACK_RATES.includes(config.playbackRate))config.playbackRate=defaults.playbackRate;
+    for (const id of ['autoNext','autoQuiz','autoApi','autoChapter','autoChapterFlow','autoSpeed']) $(id).checked = config[id];
+    $('playbackRate').value=String(config.playbackRate);
     $('bank').value = JSON.stringify(config.bank, null, 2);
     ready = true;
   }).catch(e => status(`读取设置失败：${e.message}`));
   // MutationObserver catches dialogs; interval also covers video ended, without patching site APIs.
-  const observer = new MutationObserver(() => { if (Date.now() - lastScan > 350) { lastScan = Date.now(); void tick(); } });
-  observer.observe(document.body, {subtree:true, childList:true, attributes:true, attributeFilter:['class','style']});
-  const timer = setInterval(tick, 1200);
-  chrome.runtime.onMessage?.addListener((message,sender,reply)=>{
+  observer = new MutationObserver(() => { if (Date.now() - lastScan > 350) { lastScan = Date.now(); void tick(); } });
+  if(bridge.valid()){
+    observer.observe(document.body, {subtree:true, childList:true, attributes:true, attributeFilter:['class','style']});
+    timer = setInterval(tick, 1200);
+  }
+  bridge.listen(()=>chrome.runtime.onMessage,(message,sender,reply)=>{
     if(sender.id!==chrome.runtime.id||message?.type!=='zhsChapterFlowCanReturn')return false;
     const selected=query('.chapter-item').filter(e=>e.classList.contains('current')).map(catalogEntry);
     const ok=running&&config.autoNext&&config.autoChapterFlow&&!!chapterPending&&
@@ -305,5 +350,5 @@
       selected.length===1&&selected[0].key===chapterPending.from&&video()?.ended;
     reply({ok:!!ok});return false;
   });
-  window.addEventListener('pagehide', () => { observer.disconnect(); clearInterval(timer);void chrome.runtime.sendMessage({type:'zhsCancelNext'}).catch(()=>{}); }, {once:true});
+  window.addEventListener('pagehide', () => { observer.disconnect(); clearInterval(timer);void bridge.send({type:'zhsCancelNext'}).catch(()=>{}); }, {once:true});
 })();

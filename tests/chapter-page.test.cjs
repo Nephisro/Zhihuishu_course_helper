@@ -9,7 +9,7 @@ class E {
   getClientRects(){return this.hidden?[]:[{}];}getAttribute(){return null;}addEventListener(){}click(){this.clicks++;this.onClick?.();}
 }
 async function pageHarness({autoChapter=false,title='第一章单元测试',highlight=false,progress=100,navigation='last',managed=false,submitSuccess=true,api=false,feedback=null,preexistingFeedback=false,flowId='managed-flow',onComplete}={}){
-  const ids={},requests=[],timers=[],shadow=new WeakMap(),store={zhsCourseHelper:{autoQuiz:false,autoApi:autoChapter||api,autoChapter,bank:[]}};
+  const ids={},requests=[],timers=[],cleared=[],shadow=new WeakMap(),store={zhsCourseHelper:{autoQuiz:false,autoApi:autoChapter||api,autoChapter,bank:[]}};
   const document=new E(),root=new E();document.documentElement=root;root.append=()=>{};document.getElementById=()=>null;
   document.createElement=()=>{
     const host=new E();host.attachShadow=()=>({set innerHTML(html){for(const m of html.matchAll(/id="([^"]+)"/g))ids[m[1]]=new E();ids.autoSubmit.checked=true;},getElementById:id=>ids[id]});return host;
@@ -42,10 +42,10 @@ async function pageHarness({autoChapter=false,title='第一章单元测试',high
   if(preexistingFeedback)showFeedback();
   submit.onClick=()=>{document.map['.el-dialog,.el-message-box']=[dialog];};
   confirm.onClick=()=>{document.map['.el-dialog,.el-message-box']=[];if(feedback)showFeedback();else if(submitSuccess){const notice=new E('提交成功');notice.id='submit-success';document.map['.el-message']=[notice];}};
-  let messageHandler;const lifecycle=[];
+  let messageHandler,settingsHandler;const lifecycle=[];
   const sandbox={globalThis:null,document,location:new URL('https://onlineexamh5new.zhihuishu.com/stuExamWeb.html#/webExamList/dohomework/example'),window:{addEventListener(){}},
-    getComputedStyle:()=>({display:'block',visibility:'visible',opacity:'1'}),setInterval:fn=>{timers.push(fn);return 1;},clearInterval(){},
-    chrome:{dom:{openOrClosedShadowRoot:e=>shadow.get(e)||null},storage:{onChanged:{addListener(){}},local:{get:async()=>store,set:async value=>Object.assign(store,value)}},
+    getComputedStyle:()=>({display:'block',visibility:'visible',opacity:'1'}),setInterval:fn=>{timers.push(fn);return 1;},clearInterval:id=>cleared.push(id),
+    chrome:{dom:{openOrClosedShadowRoot:e=>shadow.get(e)||null},storage:{onChanged:{addListener:fn=>settingsHandler=fn},local:{get:async()=>store,set:async value=>Object.assign(store,value)}},
       runtime:{id:'test-extension',onMessage:{addListener:fn=>messageHandler=fn},sendMessage:async message=>{
         if(message.type==='zhsChapterFlowClaim')return {ok:true,managed,id:flowId};
         if(message.type==='zhsChapterFlowComplete'){lifecycle.push(message);return onComplete?onComplete(message):{ok:true};}
@@ -53,9 +53,10 @@ async function pageHarness({autoChapter=false,title='第一章单元测试',high
       }}},
   };
   sandbox.globalThis=sandbox;
-  for(const file of ['core.js','chapter-engine.js','chapter-dom.js','chapter.js'])vm.runInNewContext(fs.readFileSync(require.resolve('../extension/'+file),'utf8'),sandbox);
+  for(const file of ['core.js','page-runtime.js','chapter-engine.js','chapter-dom.js','chapter.js'])vm.runInNewContext(fs.readFileSync(require.resolve('../extension/'+file),'utf8'),sandbox);
   await new Promise(setImmediate);
-  return {ids,requests,nodes,store,heading,submit,save,confirm,cancel,nav,next,bottomSave,outsideSave,lifecycle,returnButton,practiceButton,
+  return {ids,requests,nodes,store,heading,submit,save,confirm,cancel,nav,next,bottomSave,outsideSave,lifecycle,returnButton,practiceButton,cleared,runtime:sandbox.chrome.runtime,
+    changeSettings:patch=>settingsHandler({zhsCourseHelper:{newValue:{...store.zhsCourseHelper,...patch}}},'local'),
     cancelManaged:()=>messageHandler({type:'zhsChapterFlowCancelled'},{id:'test-extension'},()=>{}),poll:()=>timers[0]()};
 }
 test('chapter page reads closed question text and exposes API mode independently of local bank',async()=>{
@@ -156,4 +157,28 @@ test('pre-existing feedback and manually opened result tabs never request closur
     assert.equal(h.lifecycle.length,0);
     if(options.preexistingFeedback)assert.equal(h.submit.clicks,0);
   }
+});
+
+test('chapter API settings catch synchronous context invalidation and stop polling',async()=>{
+  const h=await pageHarness();let attempts=0;h.runtime.sendMessage=()=>{attempts++;throw Error('Extension context invalidated.');};
+  await h.ids.api.onclick();h.poll();await new Promise(setImmediate);await h.ids.api.onclick();
+  assert.equal(attempts,1);assert.equal(h.ids.toggle.disabled,true);assert.deepEqual(h.cleared,[1]);assert.match(h.ids.status.textContent,/请刷新当前页面/);
+});
+
+test('a managed test never submits or closes after its runtime identity disappears',async()=>{
+  const h=await pageHarness({managed:true,api:true});h.runtime.id=undefined;
+  for(let i=0;i<4;i++){h.poll();await new Promise(setImmediate);}
+  assert.equal(h.submit.clicks,0);assert.equal(h.lifecycle.length,0);assert.equal(h.ids.toggle.disabled,true);assert.match(h.ids.status.textContent,/请刷新当前页面/);
+});
+
+test('course playback preferences do not stop an in-progress chapter answer',async()=>{
+  const h=await pageHarness({managed:true,api:true});h.changeSettings({autoSpeed:true,playbackRate:1.25});
+  for(let i=0;i<5;i++){h.poll();await new Promise(setImmediate);}
+  assert.equal(h.submit.clicks,1);assert.equal(h.lifecycle.length,1);
+});
+
+test('answer-source changes still stop an in-progress chapter answer',async()=>{
+  const h=await pageHarness({managed:true,api:true});h.changeSettings({autoApi:false});
+  for(let i=0;i<4;i++){h.poll();await new Promise(setImmediate);}
+  assert.equal(h.submit.clicks,0);assert.equal(h.lifecycle.length,0);assert.match(h.ids.status.textContent,/答题设置已变化/);
 });

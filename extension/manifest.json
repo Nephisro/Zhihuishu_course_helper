@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "智慧树课程助手",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "description": "课程连播、章节测试与随堂练习辅助、本地题库及可选 API。",
   "permissions": ["storage", "debugger", "webNavigation"],
   "host_permissions": ["https://wisdom-mooc.zhihuishu.com/*", "https://onlineexamh5new.zhihuishu.com/*"],
@@ -11,11 +11,11 @@
   "minimum_chrome_version": "118",
   "content_scripts": [{
     "matches": ["https://wisdom-mooc.zhihuishu.com/study/*"],
-    "js": ["core.js", "content.js"],
+    "js": ["core.js", "page-runtime.js", "content.js"],
     "run_at": "document_idle"
   }, {
     "matches": ["https://onlineexamh5new.zhihuishu.com/stuExamWeb.html*"],
-    "js": ["core.js", "chapter-engine.js", "chapter-dom.js", "chapter.js"],
+    "js": ["core.js", "page-runtime.js", "chapter-engine.js", "chapter-dom.js", "chapter.js"],
     "run_at": "document_idle"
   }]
 }
